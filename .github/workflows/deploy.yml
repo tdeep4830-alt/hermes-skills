@@ -1,0 +1,47 @@
+name: Deploy Skills to VPS
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install pytest pyyaml
+
+      - name: Validate skill YAML headers
+        run: python tests/validate_skills.py
+
+      - name: Run unit tests
+        run: pytest tests/ -v
+
+  deploy:
+    needs: test          # 測試過先 deploy
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy to VPS via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            cd ~/my-hermes-skills
+            git pull origin main
+            python3 scripts/deploy_skills.py
+            echo "✅ Skills deployed"

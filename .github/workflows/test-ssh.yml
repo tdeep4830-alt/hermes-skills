@@ -1,0 +1,20 @@
+name: Test SSH Connection
+
+on:
+  workflow_dispatch:  # 手動觸發
+
+jobs:
+  test-ssh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Test SSH into VPS
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            echo "✅ SSH 連接成功！"
+            echo "目前位置：$(pwd)"
+            echo "用戶：$(whoami)"
+            echo "VPS時間：$(date)"
