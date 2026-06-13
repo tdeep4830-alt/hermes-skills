@@ -5,26 +5,34 @@ SKILLS_DIR = "skills"
 
 def test_all_skills():
     errors = []
-    for root, dirs, files in os.walk(SKILLS_DIR):
-        for f in files:
-            if f.endswith(".md"):
-                path = os.path.join(root, f)
-                with open(path) as fh:
-                    content = fh.read()
+    
+    skill_files = [
+        os.path.join(root, f)
+        for root, dirs, files in os.walk(SKILLS_DIR)
+        for f in files
+        if f.endswith(".md") and f != ".gitkeep"
+    ]
 
-                # 檢查有無 YAML frontmatter
-                if not content.startswith("---"):
-                    errors.append(f"{path}: 缺少 YAML frontmatter")
-                    continue
+    # 如果未有任何 skill，跳過測試
+    if not skill_files:
+        print("⚠️  未有 skills，跳過驗證")
+        return
 
-                # 解析 frontmatter
-                try:
-                    parts = content.split("---", 2)
-                    meta = yaml.safe_load(parts[1])
-                    assert "name" in meta, f"{path}: 缺少 name"
-                    assert "description" in meta, f"{path}: 缺少 description"
-                except Exception as e:
-                    errors.append(f"{path}: {e}")
+    for path in skill_files:
+        with open(path) as fh:
+            content = fh.read()
+
+        if not content.startswith("---"):
+            errors.append(f"{path}: 缺少 YAML frontmatter")
+            continue
+
+        try:
+            parts = content.split("---", 2)
+            meta = yaml.safe_load(parts[1])
+            assert "name" in meta, f"{path}: 缺少 name"
+            assert "description" in meta, f"{path}: 缺少 description"
+        except Exception as e:
+            errors.append(f"{path}: {e}")
 
     if errors:
         for e in errors:
