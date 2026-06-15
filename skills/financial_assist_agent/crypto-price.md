@@ -21,17 +21,16 @@ metadata:
 
 ## Commands
 查詢價格：
-`python3 ~/.hermes/scripts/crypto_price.py --action price --coin bitcoin`
+`python3 ~/.hermes/financial_assist_agent/scripts/crypto_price.py --action price --coin bitcoin`
 
 設定目標價：
-`python3 ~/.hermes/scripts/crypto_price.py --action set-target --coin bitcoin --target 100000`
+`python3 ~/.hermes/financial_assist_agent/scripts/crypto_price.py --action set-target --coin bitcoin --target 100000`
 
 查24h變化：
-`python3 ~/.hermes/scripts/crypto_price.py --action change --coin ethereum`
+`python3 ~/.hermes/financial_assist_agent/scripts/crypto_price.py --action change --coin ethereum`
 
 ## Output Format
 {"coin": "bitcoin", "price": 67000, "change_24h": 2.5, "target_hit": false}
 
 ## Pitfalls
-- coin 參數用全名：bitcoin / ethereum
-- CoinGecko 免費 API 有rate limit，避免頻繁查詢
+- coin 參數用全名：bitcoin
