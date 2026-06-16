@@ -1,11 +1,20 @@
 import shutil
 from pathlib import Path
+import subprocess
 
 SRC = Path(__file__).parent.parent / "skills"
 DEST = Path.home() / ".hermes/skills/custom"
 
 SCRIPTS_SRC = Path(__file__).parent  # scripts/ folder
 SCRIPTS_DEST = Path.home() / ".hermes/scripts"
+
+def install_requirement():
+    requirements_file = SCRIPTS_SRC / "requirements.txt"
+    if requirements_file.exists():
+        print(f"📦 Installing requirements from {requirements_file}...")
+        subprocess.run(["pip", "install", "-r", str(requirements_file)], check=True)
+    else:
+        print("⚠️ No requirements.txt found.")
 
 def deploy_skills():
     DEST.mkdir(parents=True, exist_ok=True)
@@ -45,6 +54,7 @@ def deploy_scripts():
 
 def main():
     print("🚀 Starting deploy...")
+    install_requirement()
     deploy_skills()
     deploy_scripts()
     print("🎉 Deploy complete!")
