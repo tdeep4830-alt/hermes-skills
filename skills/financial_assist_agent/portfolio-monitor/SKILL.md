@@ -23,13 +23,13 @@ metadata:
 
 ## Commands
 每日總結：
-`python3 ~/.hermes/financial_assist_agent/scripts/portfolio_monitor.py --action daily-summary`
+`python3 ~/.hermes/scripts/portfolio_monitor.py --action daily-summary`
 
 查看持倉：
-`python3 ~/.hermes/financial_assist_agent/scripts/portfolio_monitor.py --action portfolio`
+`python3 ~/.hermes/scripts/portfolio_monitor.py --action portfolio`
 
 新增持倉：
-`python3 ~/.hermes/financial_assist_agent/scripts/portfolio_monitor.py --action add --type stock --ticker AAPL --shares 10 --cost 180`
+`python3 ~/.hermes/scripts/portfolio_monitor.py --action add --type stock --ticker AAPL --shares 10 --cost 180`
 
 ## Pitfalls
 - 需要先設定 Supabase 及 Telegram Bot Token

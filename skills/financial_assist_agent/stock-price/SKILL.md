@@ -21,13 +21,13 @@ metadata:
 
 ## Commands
 查詢股價：
-`python3 ~/.hermes/financial_assist_agent/scripts/stock_price.py --action price --ticker AAPL`
+`python3 ~/.hermes/scripts/stock_price.py --action price --ticker AAPL`
 
 設定目標價：
-`python3 ~/.hermes/financial_assist_agent/scripts/stock_price.py --action set-target --ticker AAPL --target 200`
+`python3 ~/.hermes/scripts/stock_price.py --action set-target --ticker AAPL --target 200`
 
 查成交量：
-`python3 ~/.hermes/financial_assist_agent/scripts/stock_price.py --action volume --ticker AAPL`
+`python3 ~/.hermes/scripts/stock_price.py --action volume --ticker AAPL`
 
 ## Output Format
 返回 JSON：
