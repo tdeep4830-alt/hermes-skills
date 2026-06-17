@@ -21,13 +21,13 @@ metadata:
 
 ## Commands
 查詢價格：
-`python3 ~/.hermes/scripts/crypto_price.py --action price --coin bitcoin`
+`python3 /root/.hermes/scripts/crypto_price.py --action price --coin bitcoin`
 
 設定目標價：
-`python3 ~/.hermes/scripts/crypto_price.py --action set-target --coin bitcoin --target 100000`
+`python3 /root/.hermes/scripts/crypto_price.py --action set-target --coin bitcoin --target 100000`
 
 查24h變化：
-`python3 ~/.hermes/scripts/crypto_price.py --action change --coin ethereum`
+`python3 /root/.hermes/scripts/crypto_price.py --action change --coin ethereum`
 
 ## Output Format
 {"coin": "bitcoin", "price": 67000, "change_24h": 2.5, "target_hit": false}
