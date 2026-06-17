@@ -18,16 +18,17 @@ metadata:
 1. 分析用戶需求（查價/設目標價/查成交量）
 2. 執行對應指令
 3. 回傳結果並格式化顯示
+4. 用 terminal tool 執行以下絕對路徑指令
 
 ## Commands
 查詢股價：
-`python3 ~/.hermes/scripts/stock_price.py --action price --ticker AAPL`
+`python3 /root/.hermes/scripts/stock_price.py --action price --ticker AAPL`
 
 設定目標價：
-`python3 ~/.hermes/scripts/stock_price.py --action set-target --ticker AAPL --target 200`
+`python3 /root/.hermes/scripts/stock_price.py --action set-target --ticker AAPL --target 200`
 
 查成交量：
-`python3 ~/.hermes/scripts/stock_price.py --action volume --ticker AAPL`
+`python3 /root/.hermes/scripts/stock_price.py --action volume --ticker AAPL`
 
 ## Output Format
 返回 JSON：
