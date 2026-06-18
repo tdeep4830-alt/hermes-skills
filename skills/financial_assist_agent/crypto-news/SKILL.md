@@ -18,12 +18,12 @@ description: >
 
 執行主腳本：
 ```bash
-python3 ~/.hermes/skills/custom/btc-news-fetcher/scripts/fetch_btc_news.py
+python3 ~/.hermes/scripts/fetch_btc_news.py
 ```
 
 只顯示標題（簡潔模式）：
 ```bash
-python3 ~/.hermes/skills/custom/btc-news-fetcher/scripts/fetch_btc_news.py --brief
+python3 ~/.hermes/scripts/fetch_btc_news.py --brief
 ```
 
 ## 新聞來源
