@@ -1,18 +1,12 @@
 #!/usr/bin/env python3
 """
-BTC 每日新聞抓取腳本
-=====================
-功能：從多個主流加密貨幣新聞 RSS 來源抓取最新 BTC 相關新聞，
-      整理成摘要並可透過 Telegram 發送通知。
-
-用法：
-  python3 fetch_btc_news.py              # 顯示新聞摘要
-  python3 fetch_btc_news.py --telegram   # 顯示 + 發送 Telegram
-  python3 fetch_btc_news.py --brief      # 只顯示標題
-  python3 fetch_btc_news.py --limit 10   # 自訂顯示數量（預設 5）
-
-依賴：
-  pip3 install feedparser requests python-dotenv --break-system-packages
+BTC 每日新聞抓取腳本（修復版）
+修復：
+  1. fetch_feed()：改用 requests 先抓 content，再交 feedparser 解析
+     → 解決 feedparser 直連被 CDN block 的問題
+  2. is_btc_related()：改為「title 有關鍵字」OR「來源係 BTC 專門媒體」
+     → 避免 keyword 過嚴漏掉文章
+  3. 新增 retry 機制（最多 2 次）
 """
 
 import argparse
@@ -23,81 +17,94 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-# ── 第三方套件 ──────────────────────────────────────────────────────────────
 try:
     import feedparser
     import requests
     from dotenv import load_dotenv
 except ImportError:
-    print("❌ 缺少依賴套件，請執行：")
-    print("   pip3 install feedparser requests python-dotenv --break-system-packages")
+    print("❌ pip3 install feedparser requests python-dotenv --break-system-packages")
     sys.exit(1)
 
-
-# ── 設定 ────────────────────────────────────────────────────────────────────
-
-# 載入環境變數
 ENV_PATH = Path.home() / ".hermes" / "config" / "btc_news.env"
 if ENV_PATH.exists():
     load_dotenv(ENV_PATH)
 
-# HTTP 請求 Header（模擬瀏覽器，避免被阻擋）
+# ── 修復一：更真實的瀏覽器 Headers ──────────────────────────────────────────
 HEADERS = {
     "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/124.0.0.0 Safari/537.36"
+        "Mozilla/5.0 (X11; Linux x86_64; rv:125.0) "
+        "Gecko/20100101 Firefox/125.0"
     ),
-    "Accept": "application/rss+xml, application/xml, text/xml, */*",
-    "Accept-Language": "en-US,en;q=0.9",
+    "Accept":          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.5",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Connection":      "keep-alive",
+    "Cache-Control":   "no-cache",
 }
 
-# 新聞來源 RSS（按優先度排列）
 NEWS_SOURCES = [
-    # 專業加密貨幣媒體
-    {"name": "CoinDesk",        "url": "https://www.coindesk.com/arc/outboundfeeds/rss/",     "emoji": "📰"},
-    {"name": "CoinTelegraph",   "url": "https://cointelegraph.com/rss",                        "emoji": "📡"},
-    {"name": "Bitcoin Magazine","url": "https://bitcoinmagazine.com/.rss/full",                "emoji": "₿"},
-    {"name": "The Block",       "url": "https://www.theblock.co/rss.xml",                      "emoji": "🔷"},
-    {"name": "Decrypt",         "url": "https://decrypt.co/feed",                              "emoji": "🔐"},
-    {"name": "Blockworks",      "url": "https://blockworks.co/feed/",                          "emoji": "⛏️"},
-    # 備用：Google News（較寬鬆，通常不會封鎖爬蟲）
-    {"name": "Google News",     "url": "https://news.google.com/rss/search?q=Bitcoin+BTC+cryptocurrency&hl=en-US&gl=US&ceid=US:en", "emoji": "🌐"},
-    {"name": "Google News ZH",  "url": "https://news.google.com/rss/search?q=比特幣+BTC&hl=zh-TW&gl=TW&ceid=TW:zh-Hant",           "emoji": "🇹🇼"},
+    {"name": "CoinDesk",         "url": "https://www.coindesk.com/arc/outboundfeeds/rss/",      "emoji": "📰", "btc_focused": False, "content_keywords": []},
+    {"name": "CoinTelegraph",    "url": "https://cointelegraph.com/rss",                         "emoji": "📡", "btc_focused": False, "content_keywords": []},
+    {"name": "Bitcoin Magazine", "url": "https://bitcoinmagazine.com/.rss/full",                 "emoji": "₿",  "btc_focused": True, "content_keywords": []},
+    {"name": "The Block",        "url": "https://www.theblock.co/rss.xml",                       "emoji": "🔷", "btc_focused": False, "content_keywords": []},
+    {"name": "Decrypt",          "url": "https://decrypt.co/feed",                               "emoji": "🔐", "btc_focused": False, "content_keywords": []},
+    {"name": "Blockworks",       "url": "https://blockworks.co/feed/",                           "emoji": "⛏️",  "btc_focused": False, "content_keywords": []},
+    {"name": "Google News",      "url": "https://news.google.com/rss/search?q=Bitcoin+BTC+price&hl=en-US&gl=US&ceid=US:en", "emoji": "🌐", "btc_focused": True, "content_keywords": []},
+    {"name": "Google News ZH",   "url": "https://news.google.com/rss/search?q=比特幣+BTC+價格&hl=zh-TW&gl=TW&ceid=TW:zh-Hant", "emoji": "🇹🇼", "btc_focused": True, "content_keywords": []},
 ]
 
-# BTC 關鍵字過濾
-BTC_KEYWORDS = [
-    "bitcoin", "btc", "比特幣", "satoshi", "lightning network",
-    "lightning", "halving", "hash rate", "hashrate", "ordinals",
-    "taproot", "bip", "proof of work", "runes", "nakamoto",
-    "crypto", "cryptocurrency", "加密貨幣", "數位資產",
+cache_title_set = set()  # 用於去重，避免同一篇文章多次出現 
+
+# ── 修復二：更寬鬆的 BTC 過濾邏輯 ──────────────────────────────────────────
+BTC_KEYWORDS_TITLE = [
+    # 直接提及 BTC
+    "bitcoin", "btc", "比特幣",
+    # 相關機構/產品
+    "microstrategy", "blackrock bitcoin", "spot bitcoin", "bitcoin etf",
+    "saylor", "coinbase", "binance",
+    # 技術/協議
+    "satoshi", "lightning", "halving", "ordinals", "taproot", "runes",
+    "proof of work", "hashrate", "hash rate",
+    # 常見新聞標題模式
+    "crypto", "cryptocurrency", "digital asset",
 ]
 
-# CoinGecko 免費 API（BTC 現價）
-COINGECKO_PRICE_URL = (
-    "https://api.coingecko.com/api/v3/simple/price"
-    "?ids=bitcoin&vs_currencies=usd&include_24hr_change=true"
-)
+BTC_KEYWORDS_BODY = [
+    "bitcoin", "btc", "比特幣", "crypto", "cryptocurrency",
+    "blockchain", "digital asset", "satoshi",
+]
 
-# Binance 公開 API（備用價格來源）
-BINANCE_PRICE_URL = "https://api.binance.com/api/v3/ticker/24hr?symbol=BTCUSDT"
+def is_btc_related(entry, source: dict) -> bool:
+    """
+    修復版過濾邏輯：
+    - btc_focused 來源（Bitcoin Magazine、Google News BTC query）：全部收錄
+    - 其他來源：title 含關鍵字即收錄（唔依賴 summary/body）
+    """
+    # 規則 1：BTC 專門來源，直接收錄所有文章
+    if source.get("btc_focused"):
+        return True
 
+    # 規則 2：Title 含 BTC 關鍵字（最可靠）
+    title = entry.get("title", "").lower()
+    if any(kw in title for kw in BTC_KEYWORDS_TITLE):
+        return True
 
-# ── 核心函數 ─────────────────────────────────────────────────────────────────
+    # 規則 3：Summary/Content 含關鍵字（備用）
+    summary = entry.get("summary", "")
+    # feedparser Atom feed 的內容可能在 content[0].value
+    if not summary and entry.get("content"):
+        try:
+            summary = entry.content[0].get("value", "")
+        except Exception:
+            pass
+    summary_clean = re.sub(r"<[^>]+>", "", summary).lower()
+    if any(kw in summary_clean for kw in BTC_KEYWORDS_BODY):
+        return True
 
-def is_btc_related(entry: dict) -> bool:
-    """判斷文章是否與 BTC 相關。"""
-    text = (
-        entry.get("title", "") + " " +
-        entry.get("summary", "") + " " +
-        " ".join(tag.get("term", "") for tag in entry.get("tags", []))
-    ).lower()
-    return any(kw in text for kw in BTC_KEYWORDS)
+    return False
 
 
 def parse_published_time(entry) -> datetime:
-    """解析文章發布時間，回傳 UTC datetime。"""
     try:
         if hasattr(entry, "published_parsed") and entry.published_parsed:
             return datetime(*entry.published_parsed[:6], tzinfo=timezone.utc)
@@ -107,80 +114,95 @@ def parse_published_time(entry) -> datetime:
 
 
 def time_ago(dt: datetime) -> str:
-    """把 datetime 轉為「X 小時前」格式。"""
-    diff = datetime.now(timezone.utc) - dt
-    seconds = int(diff.total_seconds())
-    if seconds < 0:
-        return "剛剛"
-    elif seconds < 60:
-        return f"{seconds} 秒前"
-    elif seconds < 3600:
-        return f"{seconds // 60} 分鐘前"
-    elif seconds < 86400:
-        return f"{seconds // 3600} 小時前"
-    else:
-        return f"{seconds // 86400} 天前"
+    diff   = datetime.now(timezone.utc) - dt
+    secs   = int(diff.total_seconds())
+    if secs < 0:      return "剛剛"
+    if secs < 60:     return f"{secs} 秒前"
+    if secs < 3600:   return f"{secs // 60} 分鐘前"
+    if secs < 86400:  return f"{secs // 3600} 小時前"
+    return f"{secs // 86400} 天前"
 
 
 def _clean_summary(raw: str) -> str:
-    """移除 HTML tag，截取前 150 字元作為摘要。"""
     text = re.sub(r"<[^>]+>", "", raw).strip()
     text = re.sub(r"\s+", " ", text)
     return (text[:150] + "…") if len(text) > 150 else text
 
 
-def fetch_feed(source: dict) -> list[dict]:
-    """抓取單一 RSS 來源，回傳 BTC 相關文章清單。"""
-    articles = []
-    try:
-        # feedparser 支援傳入 request_headers
-        feed = feedparser.parse(
-            source["url"],
-            request_headers=HEADERS,
-            agent=HEADERS["User-Agent"],
-        )
-        # bozo=True 表示 feed 格式有問題，但仍可嘗試解析
-        status = getattr(feed, "status", 200)
-        if status == 403:
-            print(f"   ⚠️  {source['name']}: 拒絕存取 (403)，略過", file=sys.stderr)
-            return []
+# ── 修復三：requests 先抓，feedparser 後解析 ────────────────────────────────
+def fetch_feed(source: dict, retries: int = 2) -> list[dict]:
+    """
+    修復版：用 requests 抓取 RSS content，再交 feedparser 解析。
+    比直接 feedparser.parse(url) 更能控制 headers，避免 CDN block。
+    """
+    for attempt in range(retries):
+        try:
+            r = requests.get(source["url"], headers=HEADERS, timeout=15)
 
-        for entry in feed.entries:
-            if not is_btc_related(entry):
+            if r.status_code == 403:
+                print(f"   ⚠️  {source['name']}: 403 被拒，略過", file=sys.stderr)
+                return []
+            if r.status_code == 429:
+                wait = 5 * (attempt + 1)
+                print(f"   ⏳ {source['name']}: Rate limit，等 {wait}s 後重試", file=sys.stderr)
+                time.sleep(wait)
                 continue
-            articles.append({
-                "title":     entry.get("title", "（無標題）").strip(),
-                "summary":   _clean_summary(entry.get("summary", "")),
-                "link":      entry.get("link", ""),
-                "source":    source["name"],
-                "emoji":     source["emoji"],
-                "published": parse_published_time(entry),
-            })
-        if articles:
-            print(f"   ✅ {source['name']}: 找到 {len(articles)} 篇 BTC 文章")
-        else:
-            print(f"   ℹ️  {source['name']}: 無 BTC 相關文章")
-    except Exception as e:
-        print(f"   ❌ {source['name']}: {e}", file=sys.stderr)
-    return articles
+            if not r.ok:
+                print(f"   ⚠️  {source['name']}: HTTP {r.status_code}", file=sys.stderr)
+                return []
+            if len(r.content) < 200:
+                print(f"   ⚠️  {source['name']}: 回應內容太短（{len(r.content)} bytes）", file=sys.stderr)
+                return []
+
+            # ✅ 用 content bytes 解析（唔係 URL）
+            feed     = feedparser.parse(r.content)
+            articles = []
+
+            for entry in feed.entries:
+                if not is_btc_related(entry, source):
+                    continue
+                # 去重：同一篇文章唔好出現多次
+                title_key = entry.get("title", "").lower()[:60]
+                if title_key in cache_title_set:
+                    continue
+                cache_title_set.add(title_key)
+                articles.append({
+                    "title":     entry.get("title", "（無標題）").strip(),
+                    "summary":   _clean_summary(entry.get("summary", "")),
+                    "link":      entry.get("link", ""),
+                    "source":    source["name"],
+                    "emoji":     source["emoji"],
+                    "published": parse_published_time(entry),
+                })
+
+            if articles:
+                print(f"   ✅ {source['name']}: {len(articles)} 篇")
+            else:
+                total = len(feed.entries)
+                print(f"   ℹ️  {source['name']}: 共 {total} 篇文章，無符合 BTC 條件")
+            return articles
+
+        except requests.exceptions.Timeout:
+            print(f"   ⏱️  {source['name']}: 連線逾時", file=sys.stderr)
+        except Exception as e:
+            print(f"   ❌ {source['name']}: {e}", file=sys.stderr)
+
+        if attempt < retries - 1:
+            time.sleep(2)
+
+    return []
 
 
 def fetch_news(limit: int = 10) -> list[dict]:
-    """
-    從所有 RSS 來源抓取，過濾 BTC 相關文章，
-    依時間排序後回傳最新 `limit` 篇。
-    """
     all_articles = []
     for source in NEWS_SOURCES:
         all_articles.extend(fetch_feed(source))
 
-    # 去重（相同標題只留一篇）
-    seen_titles = set()
-    unique = []
+    seen, unique = set(), []
     for art in all_articles:
         key = art["title"].lower()[:60]
-        if key not in seen_titles:
-            seen_titles.add(key)
+        if key not in seen:
+            seen.add(key)
             unique.append(art)
 
     unique.sort(key=lambda x: x["published"], reverse=True)
@@ -188,137 +210,97 @@ def fetch_news(limit: int = 10) -> list[dict]:
 
 
 def fetch_btc_price() -> dict | None:
-    """抓取 BTC 現價，優先 CoinGecko，備用 Binance。"""
-    # 方案 1：CoinGecko
-    try:
-        r = requests.get(COINGECKO_PRICE_URL, headers=HEADERS, timeout=10)
-        if r.ok:
-            data = r.json().get("bitcoin", {})
-            return {
-                "price":      data.get("usd", 0),
-                "change_24h": data.get("usd_24h_change", 0),
-                "source":     "CoinGecko",
-            }
-    except Exception:
-        pass
-
-    # 方案 2：Binance 公開 API（不需 API key）
-    try:
-        r = requests.get(BINANCE_PRICE_URL, timeout=10)
-        if r.ok:
+    for url, source_name in [
+        ("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd&include_24hr_change=true", "CoinGecko"),
+        ("https://api.binance.com/api/v3/ticker/24hr?symbol=BTCUSDT", "Binance"),
+    ]:
+        try:
+            r = requests.get(url, timeout=10)
+            if not r.ok:
+                continue
             data = r.json()
-            price  = float(data.get("lastPrice", 0))
-            change = float(data.get("priceChangePercent", 0))
-            return {"price": price, "change_24h": change, "source": "Binance"}
-    except Exception:
-        pass
-
+            if source_name == "CoinGecko":
+                btc = data.get("bitcoin", {})
+                return {"price": btc.get("usd", 0), "change_24h": btc.get("usd_24h_change", 0), "source": "CoinGecko"}
+            else:
+                return {"price": float(data["lastPrice"]), "change_24h": float(data["priceChangePercent"]), "source": "Binance"}
+        except Exception:
+            continue
     return None
 
 
-# ── 輸出格式化 ────────────────────────────────────────────────────────────────
-
-def format_full(articles: list[dict], price: dict | None) -> str:
-    now = datetime.now().strftime("%Y-%m-%d %H:%M")
-    lines = [
-        f"📰 BTC 每日新聞摘要 — {now}",
-        "",
-        f"🔥 重點新聞（最新 Top {len(articles)}）",
-        "━━━━━━━━━━━━━━━━━━━━━━",
-    ]
-
+def format_full(articles, price):
+    now   = datetime.now().strftime("%Y-%m-%d %H:%M")
+    lines = [f"📰 BTC 每日新聞摘要 — {now}", "",
+             f"🔥 重點新聞（最新 Top {len(articles)}）",
+             "━━━━━━━━━━━━━━━━━━━━━━"]
     for i, art in enumerate(articles, 1):
-        ago = time_ago(art["published"])
-        lines += [
-            f"\n{i}. {art['title']}",
-            f"   {art['emoji']} 來源: {art['source']} | ⏰ {ago}",
-        ]
+        lines += [f"\n{i}. {art['title']}",
+                  f"   {art['emoji']} {art['source']} | ⏰ {time_ago(art['published'])}"]
         if art["summary"]:
             lines.append(f"   📝 {art['summary']}")
         if art["link"]:
             lines.append(f"   🔗 {art['link']}")
-
     if price:
         arrow = "📈" if price["change_24h"] >= 0 else "📉"
         sign  = "+" if price["change_24h"] >= 0 else ""
-        lines += [
-            "",
-            "📊 BTC 價格快照",
-            "━━━━━━━━━━━━━━━━━━━━━━",
-            f"   💰 現價:    ${price['price']:,.0f} USD",
-            f"   {arrow} 24h:    {sign}{price['change_24h']:.2f}%",
-            f"   📡 資料源:  {price['source']}",
-        ]
-
+        lines += ["", "📊 BTC 價格快照", "━━━━━━━━━━━━━━━━━━━━━━",
+                  f"   💰 現價:   ${price['price']:,.0f} USD",
+                  f"   {arrow} 24h:   {sign}{price['change_24h']:.2f}%",
+                  f"   📡 來源:   {price['source']}"]
     lines.append("\n─────────────────────────")
     return "\n".join(lines)
 
 
-def format_brief(articles: list[dict]) -> str:
-    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+def format_brief(articles):
+    now   = datetime.now().strftime("%Y-%m-%d %H:%M")
     lines = [f"₿ BTC 新聞速覽 — {now}", ""]
     for i, art in enumerate(articles, 1):
         lines.append(f"{i}. [{art['source']}] {art['title']}")
     return "\n".join(lines)
 
 
-# ── Telegram 發送 ─────────────────────────────────────────────────────────────
-
 def send_telegram(message: str) -> bool:
     token   = os.getenv("TELEGRAM_BOT_TOKEN", "")
     chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
-
     if not token or not chat_id:
-        print(f"❌ 請在 {ENV_PATH} 設定 TELEGRAM_BOT_TOKEN 與 TELEGRAM_CHAT_ID", file=sys.stderr)
+        print(f"❌ 請設定 {ENV_PATH}", file=sys.stderr)
         return False
-
     url    = f"https://api.telegram.org/bot{token}/sendMessage"
-    chunks = [message[i:i + 4000] for i in range(0, len(message), 4000)]
-
+    chunks = [message[i:i+4000] for i in range(0, len(message), 4000)]
     for chunk in chunks:
-        r = requests.post(url, json={
-            "chat_id":    chat_id,
-            "text":       chunk,
-            "parse_mode": "HTML",
-        }, timeout=15)
+        r = requests.post(url, json={"chat_id": chat_id, "text": chunk}, timeout=15)
         if not r.ok:
-            print(f"❌ Telegram 錯誤: {r.text}", file=sys.stderr)
+            print(f"❌ Telegram: {r.text}", file=sys.stderr)
             return False
         time.sleep(0.3)
-
-    print("✅ Telegram 通知已發送")
+    print("✅ Telegram 已發送")
     return True
 
 
-# ── 主程式 ────────────────────────────────────────────────────────────────────
-
 def main():
-    parser = argparse.ArgumentParser(description="BTC 每日新聞抓取工具")
-    parser.add_argument("--telegram", action="store_true", help="發送 Telegram 通知")
-    parser.add_argument("--brief",    action="store_true", help="只顯示標題（簡潔模式）")
-    parser.add_argument("--limit",    type=int, default=5,  help="顯示新聞數量（預設 5）")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--telegram", action="store_true")
+    parser.add_argument("--brief",    action="store_true")
+    parser.add_argument("--limit",    type=int, default=10)
     args = parser.parse_args()
 
     print(f"🔍 正在從 {len(NEWS_SOURCES)} 個來源抓取 BTC 新聞…\n")
     articles = fetch_news(limit=args.limit)
 
     if not articles:
-        print("\n⚠️  未找到 BTC 相關新聞，可能是網路問題或所有 RSS 源都被封鎖")
-        print("   💡 提示：請確認 VPS 可正常存取外部網路")
+        print("\n⚠️  未找到 BTC 相關新聞")
         sys.exit(1)
 
     price = None
     if not args.brief:
         print("\n💹 正在取得 BTC 現價…")
         price = fetch_btc_price()
-        if not price:
-            print("   ⚠️  無法取得價格，略過")
 
     output = format_brief(articles) if args.brief else format_full(articles, price)
     print("\n" + output)
 
     if args.telegram:
-        print("\n📤 正在發送 Telegram 通知…")
         send_telegram(output)
 
 
