@@ -39,18 +39,20 @@ def deploy_skills():
 def deploy_scripts():
     SCRIPTS_DEST.mkdir(parents=True, exist_ok=True)
 
-    # 遍歷 scripts/ 下所有子folder
     for agent_dir in SCRIPTS_SRC.iterdir():
         if agent_dir.name.startswith('.') or not agent_dir.is_dir():
             continue
         if agent_dir.name == "__pycache__":
             continue
 
-        # Copy 每個 .py 檔案去 ~/.hermes/scripts/
-        for py_file in agent_dir.glob("*.py"):
-            dest_file = SCRIPTS_DEST / py_file.name
+        for py_file in agent_dir.rglob("*.py"):
+            if "__pycache__" in py_file.parts:
+                continue
+            rel_path = py_file.relative_to(agent_dir)
+            dest_file = SCRIPTS_DEST / agent_dir.name / rel_path
+            dest_file.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(py_file, dest_file)
-            print(f"✅ Script deployed: {py_file.name} → {dest_file}")
+            print(f"   ✅ Script deployed: {agent_dir.name}/{rel_path} → {dest_file}")
 
 def main():
     print("🚀 Starting deploy...")
