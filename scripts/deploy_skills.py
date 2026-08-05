@@ -46,24 +46,14 @@ def deploy_scripts():
     SCRIPTS_DEST.mkdir(parents=True, exist_ok=True)
 
     for agent_dir in SCRIPTS_SRC.iterdir():
-        if agent_dir.name.startswith('.') or not agent_dir.is_dir():
+        if agent_dir.name.startswith('.') or agent_dir.name == '__pycache__':
             continue
-        if agent_dir.name == "__pycache__":
+        if not agent_dir.is_dir():
             continue
 
-        print(f"   📂 掃描 {agent_dir.name}...")
-        for item in agent_dir.iterdir():
-            if item.name.startswith('.') or item.name == '__pycache__':
-                continue
-
-            if item.is_dir():
-                dest_dir = SCRIPTS_DEST / agent_dir.name / item.name
-                shutil.copytree(item, dest_dir, ignore=IGNORE_PATTERNS, dirs_exist_ok=True)
-                print(f"   📦 Sub-project deployed: {agent_dir.name}/{item.name} → {dest_dir}")
-            elif item.suffix == ".py":
-                dest_file = SCRIPTS_DEST / item.name
-                shutil.copy2(item, dest_file)
-                print(f"   ✅ Script deployed: {item.name} → {dest_file}")
+        dest_dir = SCRIPTS_DEST / agent_dir.name
+        shutil.copytree(agent_dir, dest_dir, ignore=IGNORE_PATTERNS, dirs_exist_ok=True)
+        print(f"✅ Agent deployed: {agent_dir.name} → {dest_dir}")
 
 def main():
     print("🚀 Starting deploy...")
