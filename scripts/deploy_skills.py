@@ -8,6 +8,10 @@ DEST = Path.home() / ".hermes/skills/custom"
 SCRIPTS_SRC = Path(__file__).parent  # scripts/ folder
 SCRIPTS_DEST = Path.home() / ".hermes/scripts"
 
+IGNORE_PATTERNS = shutil.ignore_patterns(
+    '__pycache__', '*.pyc', '.git', 'pgdata', '.venv', 'venv', 'node_modules', '.DS_Store'
+)
+
 def install_requirement():
     requirements_file = SCRIPTS_SRC / "requirements.txt"
     if requirements_file.exists():
@@ -36,6 +40,8 @@ def deploy_skills():
             shutil.copy2(skill_md, target / "SKILL.md")
             print(f"✅ Skill deployed: {category_dir.name}/{skill_dir.name}")
 
+
+
 def deploy_scripts():
     SCRIPTS_DEST.mkdir(parents=True, exist_ok=True)
 
@@ -45,14 +51,19 @@ def deploy_scripts():
         if agent_dir.name == "__pycache__":
             continue
 
-        for py_file in agent_dir.rglob("*.py"):
-            if "__pycache__" in py_file.parts:
+        print(f"   📂 掃描 {agent_dir.name}...")
+        for item in agent_dir.iterdir():
+            if item.name.startswith('.') or item.name == '__pycache__':
                 continue
-            rel_path = py_file.relative_to(agent_dir)
-            dest_file = SCRIPTS_DEST / agent_dir.name / rel_path
-            dest_file.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(py_file, dest_file)
-            print(f"   ✅ Script deployed: {agent_dir.name}/{rel_path} → {dest_file}")
+
+            if item.is_dir():
+                dest_dir = SCRIPTS_DEST / agent_dir.name / item.name
+                shutil.copytree(item, dest_dir, ignore=IGNORE_PATTERNS, dirs_exist_ok=True)
+                print(f"   📦 Sub-project deployed: {agent_dir.name}/{item.name} → {dest_dir}")
+            elif item.suffix == ".py":
+                dest_file = SCRIPTS_DEST / item.name
+                shutil.copy2(item, dest_file)
+                print(f"   ✅ Script deployed: {item.name} → {dest_file}")
 
 def main():
     print("🚀 Starting deploy...")
