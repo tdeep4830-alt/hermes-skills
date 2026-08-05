@@ -1,6 +1,0 @@
-.env
-__pycache__/
-*.pyc
-pgdata/
-.sec_cache/
-10k_filings/
