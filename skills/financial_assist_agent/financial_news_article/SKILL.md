@@ -28,7 +28,7 @@ ingest-news` 或 `ingest-article`，唔使再等用戶確認一次。
 ## News pipeline
 
 ```bash
-cd financial_assist_agent/financial_news_acticle
+cd scripts/financial_assist_agent/financial_news_acticle
 python -m app.cli ingest-news --file /path/to/news.txt [--source "Reuters"] [--url "https://..."]
 ```
 
@@ -51,7 +51,7 @@ echo "新聞原文……" | python -m app.cli ingest-news --source "Reuters"
 ## Article pipeline
 
 ```bash
-cd financial_assist_agent/financial_news_acticle
+cd scripts/financial_assist_agent/financial_news_acticle
 python -m app.cli ingest-article --file /path/to/article.txt [--source "Seeking Alpha"] [--url "https://..."]
 ```
 
