@@ -17,7 +17,7 @@ import sys
 from datetime import datetime, timezone
 
 from app.etl.run_daily import analyze_and_save
-from app.etl.run_matching import run_matching
+from app.etl.pipeline import ingest_news, ingest_article, run_matching
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -31,18 +31,6 @@ def _read_text(file_path: str | None) -> str:
     if not text.strip():
         raise SystemExit("冇文字輸入——用 --file 指定檔案，或者將原文 pipe 落 stdin。")
     return text
-
-
-def _ingest(type_of_analysis: str, args: argparse.Namespace) -> None:
-    text = _read_text(args.file)
-    result = analyze_and_save(
-        type_of_analysis,
-        text,
-        source=args.source,
-        url=args.url,
-        published_at=datetime.now(timezone.utc),
-    )
-    print(f"已存入 DB：news_id={result.news_id}")
 
 
 def main() -> None:
@@ -60,9 +48,9 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.command == "ingest-news":
-        _ingest("news", args)
+        ingest_news(_read_text(args.file), source=args.source, url=args.url)
     elif args.command == "ingest-article":
-        _ingest("article", args)
+        ingest_article(_read_text(args.file), source=args.source, url=args.url)
     elif args.command == "run-matching":
         run_matching()
 

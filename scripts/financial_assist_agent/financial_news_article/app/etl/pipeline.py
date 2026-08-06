@@ -20,11 +20,6 @@ from typing import Optional, TypedDict
 
 from dotenv import load_dotenv
 
-_STOCK_NEWS_DB_ROOT = Path(__file__).resolve().parent.parent / "stock_news_db"
-if str(_STOCK_NEWS_DB_ROOT) not in sys.path:
-    sys.path.insert(0, str(_STOCK_NEWS_DB_ROOT))
-
-load_dotenv(_STOCK_NEWS_DB_ROOT / ".env")
 
 from app.etl.run_daily import analyze_and_save  # noqa: E402
 from app.etl.run_matching import run_matching as _run_matching  # noqa: E402
@@ -91,10 +86,4 @@ def run_matching(date: Optional[date | datetime | str] = None) -> None:
 
     resolved_date = _coerce_date(date)
     _run_matching(resolved_date)
-
-
-if __name__ == "__main__":
-    news_id = ingest_news("Galaxy Digital (GLXY) and Bank of New York Mellon (BNY) have strategically collaborated to advance digital asset infrastructure for institutional markets, including support for staking. BNY's digital asset custody platform with Galaxy's proof-of-stake network aims to help customers participate in staking through a secure, streamlined workflow. Additionally, Galaxy will serve as a design partner to further BNY's digital asset platform infrastructure. With the addition of staking, we will be providing clients with a more comprehensive digital asset custody offering built on the governance, controls, and resiliency they expect from BNY, said BNY's chief product and innovation officer, Carolyn Weinberg. Galaxy has spent years building the institutional-grade infrastructure to drive that shift, including staking. Our collaboration with BNY brings that work into a framework the worlds largest institutions can trust. As a design partner on BNYs platform infrastructure, we are helping shape the foundation on which these services will run, said Steve Kurz, global co-head of digital assets at Galaxy.")
-    
-    print(f"News ingested successfully. News ID: {news_id}")
 

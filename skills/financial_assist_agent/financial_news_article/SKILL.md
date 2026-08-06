@@ -1,13 +1,21 @@
 ---
-name: stock-news-pipeline
-description: Ingest a piece of financial news or an analysis article into the stock_news_db pipeline (LLM extraction, auto company creation, embedding), and run the periodic News-Company / News-Article matching job. Use when the user pastes raw news text or an analysis article and wants it added to the database, or asks to run/schedule matching.
+name: news-article-ingest-and-matching
+description: Ingest a piece of financial news or an analysis article into the database pipeline (LLM extraction, auto company creation, embedding), and run the periodic News-Company / News-Article matching job. Use when the user pastes raw news text or an analysis article — including in the Telegram group chat — and wants it added to the database, or asks to run/schedule matching.
 ---
 
 # Stock News DB Pipeline
 
-操作 `stock_news_db` 呢個 project 嘅新聞/文章 ingestion + matching pipeline。成個 project 喺
-`Financial_bot/stock_news_db/`，所有指令都要喺呢層目錄底下用 `python -m app.xxx` 咁執行
+操作 `financial_assist_agent/financial_news_acticle` 呢個 project 嘅新聞/文章 ingestion + matching pipeline。成個 project 喺
+`financial_assist_agent/financial_news_acticle`，所有指令都要喺呢層目錄底下用 `python -m app.xxx` 咁執行
 （唔可以喺 `app/` 入面執行，`-m` 要求 `app` package 嘅上一層做 cwd）。
+
+## TG Group trigger
+
+用戶（或者任何人）喺 Telegram Group 度貼一段新聞原文或者一篇分析文章，**唔使用戶再明確講
+「幫我存入 DB」**——見到成段似新聞/文章嘅內容（唔係普通聊天、唔係問價、唔係短短一兩句評論），
+就即刻自動跟返下面「點分」揀 News 定 Article pipeline，然後直接行 `python -m app.cli
+ingest-news` 或 `ingest-article`，唔使再等用戶確認一次。
+唔肯定段嘢係咪想 ingest（例如淨係分享個 link 冧幾句評論），先問用戶一聲。
 
 ## 呢個 skill 覆蓋兩條分開嘅 pipeline，唔好撈埋
 
@@ -20,7 +28,7 @@ description: Ingest a piece of financial news or an analysis article into the st
 ## News pipeline
 
 ```bash
-cd stock_news_db
+cd financial_assist_agent/financial_news_acticle
 python -m app.cli ingest-news --file /path/to/news.txt [--source "Reuters"] [--url "https://..."]
 ```
 
@@ -43,7 +51,14 @@ echo "新聞原文……" | python -m app.cli ingest-news --source "Reuters"
 ## Article pipeline
 
 ```bash
-python -m app.cli ingest-article --file /path/to/article.txt [--source "..."] [--url "..."]
+cd financial_assist_agent/financial_news_acticle
+python -m app.cli ingest-article --file /path/to/article.txt [--source "Seeking Alpha"] [--url "https://..."]
+```
+
+或者直接 pipe 文字：
+
+```bash
+echo "文章原文……" | python -m app.cli ingest-article --source "Seeking Alpha"
 ```
 
 同 News pipeline 一樣嘅步驟，加多幾樣：連 `thesis`/`conclusion` 都存埋（`analysis_article`
@@ -81,7 +96,7 @@ python -m app.cli run-matching
   貼十幾廿則嘢想全部 ingest 嗰陣，先同用戶確認一聲先大量執行，唔好靜雞雞爆佢啲 API quota。
 - **環境**：`.env` 要有 `DATABASE_URL`（Supabase）、`OPENAI_API_KEY`（其實係 DeepSeek key，
   歷史命名問題）、`EMBEDDING_API_KEY`（真正 OpenAI key，畀 embedding 用）三個都設定好。
-- **執行位置**：一定要喺 `stock_news_db/` 呢層，`python -m app.cli ...`，唔係
+- **執行位置**：一定要喺 `financial_assist_agent/financial_news_article/` 呢層，`python -m app.cli ...`，唔係
   `python app/cli.py ...`（relative import 會炸）。
 - 想睇單一 news_id 嘅 matching 結果，可以直接查 `news_company_link` / `news_article_matches`
   兩張 table，唔使再跑 code。
