@@ -41,8 +41,12 @@ def deploy_skills():
             print(f"✅ Skill deployed: {category_dir.name}/{skill_dir.name}")
 
 
-
 def deploy_scripts():
+    # 先清空目標資料夾
+    if SCRIPTS_DEST.exists():
+        shutil.rmtree(SCRIPTS_DEST)
+        print(f"🗑️ Cleared old scripts: {SCRIPTS_DEST}")
+    
     SCRIPTS_DEST.mkdir(parents=True, exist_ok=True)
 
     for agent_dir in SCRIPTS_SRC.iterdir():
