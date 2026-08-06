@@ -5,98 +5,89 @@ description: Ingest a piece of financial news or an analysis article into the da
 
 # Stock News DB Pipeline
 
-操作 `financial_assist_agent/financial_news_acticle` 呢個 project 嘅新聞/文章 ingestion + matching pipeline。成個 project 喺
-`financial_assist_agent/financial_news_acticle`，所有指令都要喺呢層目錄底下用 `python -m app.xxx` 咁執行
-（唔可以喺 `app/` 入面執行，`-m` 要求 `app` package 嘅上一層做 cwd）。
+操作 `financial_news_article` project 嘅新聞/文章 ingestion + matching pipeline。
+
+## 執行方式
+
+所有指令透過 Hermes API Bridge（`http://127.0.0.1:5000`）執行，
+由 host 機負責 `docker exec` 入 `hermes-agent-c05p-hermes-agent-1` container。
+Agent 只需用 `curl` 呼叫即可，唔需要直接執行 python。
 
 ## TG Group trigger
 
-用戶（或者任何人）喺 Telegram Group 度貼一段新聞原文或者一篇分析文章，**唔使用戶再明確講
-「幫我存入 DB」**——見到成段似新聞/文章嘅內容（唔係普通聊天、唔係問價、唔係短短一兩句評論），
-就即刻自動跟返下面「點分」揀 News 定 Article pipeline，然後直接行 `python -m app.cli
-ingest-news` 或 `ingest-article`，唔使再等用戶確認一次。
-唔肯定段嘢係咪想 ingest（例如淨係分享個 link 冧幾句評論），先問用戶一聲。
+用戶（或任何人）喺 Telegram Group 貼一段新聞原文或分析文章，
+**唔使用戶再明確講「幫我存入 DB」**——見到成段似新聞/文章嘅內容
+（唔係普通聊天、唔係問價、唔係短短一兩句評論），就即刻自動判斷
+News 定 Article pipeline，然後直接 call API，唔使再等用戶確認。
+唔肯定係咪想 ingest（例如淨係分享個 link 加幾句評論），先問用戶一聲。
 
-## 呢個 skill 覆蓋兩條分開嘅 pipeline，唔好撈埋
+## 點分 News 同 Article
 
-1. **News pipeline** —— 用戶貼一段「事實/事件報導」（業績、產品發布、併購、監管動作……），想存入 DB
-2. **Article pipeline** —— 用戶貼一篇「分析/觀點文章」，有明確 thesis（投資論點）同 conclusion（例如 Seeking Alpha 風格嘅長文），想存入 DB
+| | News | Article |
+|---|---|---|
+| 內容 | 報導「發生咗咩事」| 作者有論點、推論、投資觀點 |
+| 例子 | 業績、產品發布、併購 | Seeking Alpha 風格長文 |
 
-點分：如果段文字主要係報導緊「發生咗咩事」，用 News；如果段文字有作者自己嘅論點、推論、
-「我認為呢隻股會點點點」，用 Article。唔肯定就問用戶。
+唔肯定就問用戶。
 
-## News pipeline
-
-```bash
-cd scripts/financial_assist_agent/financial_news_acticle
-python -m app.cli ingest-news --file /path/to/news.txt [--source "Reuters"] [--url "https://..."]
-```
-
-或者直接 pipe 文字（唔使開檔案）：
+## Ingest News
 
 ```bash
-echo "新聞原文……" | python -m app.cli ingest-news --source "Reuters"
+curl -s -X POST http://127.0.0.1:5000/run/ingest-news \
+  -H "Content-Type: application/json" \
+  -d '{"text": "新聞原文貼呢度", "source": "Reuters"}'
 ```
 
-背後自動做晒（唔使你手動介入，純粹解釋畀你知系統做緊咩）：
+背後自動做：
+1. LLM 抽 title/description/sentiment/tickers/tags
+2. 逐個 ticker 查 DB；搵唔到就自動建公司（yfinance + SEC 10-K）
+3. 存入 `news` table + `NewsCompanyLink` + tag
+4. embed 落 `company_fact_embeddings`
 
-1. LLM（`app/etl/LLM_analyze.py`，DeepSeek）由原文抽 title/description/sentiment/tickers/tags
-2. 逐個 ticker 查 DB；搵唔到就自動 `save_company()`——攞 yfinance + SEC 10-K 資料，再用 LLM
-   拆做 business_model/products/technologies/services/risks/legal_issues 等，一次過起哂間新公司
-3. News 存入 `news` table，連埋 `NewsCompanyLink`（match_source='direct_mention'）同 tag
-4. 呢則新聞嘅 description 即時 embed 落 `company_fact_embeddings`（entity_type='news'）
+成功會返回 `"已存入 DB：news_id=<id>"`。
 
-成功會印 `已存入 DB：news_id=<id>`。
-
-## Article pipeline
+## Ingest Article
 
 ```bash
-cd scripts/financial_assist_agent/financial_news_acticle
-python -m app.cli ingest-article --file /path/to/article.txt [--source "Seeking Alpha"] [--url "https://..."]
+curl -s -X POST http://127.0.0.1:5000/run/ingest-article \
+  -H "Content-Type: application/json" \
+  -d '{"text": "文章原文貼呢度", "source": "Seeking Alpha"}'
 ```
 
-或者直接 pipe 文字：
+同 News pipeline，額外存 `thesis`/`conclusion`（`analysis_article` table），
+用 `ArticleCompanyLink`/`ArticleTagLink`，多 embed 一次 `thesis`。
+
+## Run Matching
+
+**唔好**每次 ingest 完即刻跑，應該等一批新聞/文章入晒 DB 先一齊跑：
 
 ```bash
-echo "文章原文……" | python -m app.cli ingest-article --source "Seeking Alpha"
+curl -s -X POST http://127.0.0.1:5000/run/run-matching
 ```
 
-同 News pipeline 一樣嘅步驟，加多幾樣：連 `thesis`/`conclusion` 都存埋（`analysis_article`
-table），連公司/tag 用 `ArticleCompanyLink`/`ArticleTagLink`（唔係 `NewsCompanyLink`），除咗
-embed 底層嗰行 news 嘅 description，仲會多 embed 多次 `thesis`（entity_type='article'）。
+跑：
+- `match_news_to_companies()` —— Layer 2（tag/category）+ Layer 3（embedding）
+- `match_news_to_articles()` —— shared_company / shared_tag / embedding 三層
 
-## Matching —— 定時/一批一齊做，唔好逐次 ingest 完即刻跑
+兩個 matcher 都係 idempotent，隨時可以重跑。
 
-**唔好**每 ingest 一則新聞/文章就即刻跑 matching。Matching 想食盡成個
-`company_fact_embeddings` corpus，遲少少、夾埋一批新聞一齊跑先啱：
+**幾時跑**：
+- 用戶明確講「跑吓 matching」
+- 用戶一次過貼咗好幾則新聞/文章後問相關性
+- 生產環境用 cron 定時觸發（建議每 15-60 分鐘）
+
+## 確認 API 正常運行
 
 ```bash
-python -m app.cli run-matching
+curl -s http://127.0.0.1:5000/health
 ```
 
-呢個會對 DB 入面**全部**新聞跑一次：
+返回 `{"status": "ok"}` 即係正常。
 
-- `match_news_to_companies()` —— Layer 2（tag/category 規則）+ Layer 3（embedding 語義比對），
-  補埋 Layer 1（直接提及，ingest 嗰陣已經做咗）漏低嘅公司
-- `match_news_to_articles()` —— shared_company / shared_tag / embedding 三層，搵新聞同分析
-  文章之間嘅關聯
+## 注意事項
 
-兩個 matcher 都係 idempotent（淨係補未覆蓋嘅 match，唔會重複插入），所以隨時可以重跑。
-
-**幾時要跑**：
-- 用戶明確講「跑吓 matching」/「幫我 match 埋」
-- 用戶一次過貼咗好幾則新聞/文章之後，問「有冇邊啲新聞同邊間公司/邊篇文章有關」
-- 生產環境應該用 cron 定時觸發（例如每 15-60 分鐘一次），同 ingestion 分開唔同 cadence——
-  詳細原因見 `app/etl/run_matching.py` 檔案頭註解
-
-## 要留意嘅嘢
-
-- **成本**：每次 ingest 都會 call 幾次 DeepSeek（LLM 分析）+ 如果有新公司就仲會加埋
-  yfinance/SEC lookup + 3 次 LLM call；成功之後仲有一次 OpenAI embedding call。用戶一次過
-  貼十幾廿則嘢想全部 ingest 嗰陣，先同用戶確認一聲先大量執行，唔好靜雞雞爆佢啲 API quota。
-- **環境**：`.env` 要有 `DATABASE_URL`（Supabase）、`OPENAI_API_KEY`（其實係 DeepSeek key，
-  歷史命名問題）、`EMBEDDING_API_KEY`（真正 OpenAI key，畀 embedding 用）三個都設定好。
-- **執行位置**：一定要喺 `financial_assist_agent/financial_news_article/` 呢層，`python -m app.cli ...`，唔係
-  `python app/cli.py ...`（relative import 會炸）。
-- 想睇單一 news_id 嘅 matching 結果，可以直接查 `news_company_link` / `news_article_matches`
-  兩張 table，唔使再跑 code。
+- **成本**：每次 ingest call 幾次 DeepSeek + OpenAI embedding。
+  用戶一次貼十幾則嘢想全部 ingest，先確認再執行。
+- **環境變數**：container 入面要有 `DATABASE_URL`、`OPENAI_API_KEY`（DeepSeek key）、
+  `EMBEDDING_API_KEY`（OpenAI key）。
+- **Matching 時機**：ingestion 同 matching 分開 cadence，唔好 ingest 一次就即刻跑。
