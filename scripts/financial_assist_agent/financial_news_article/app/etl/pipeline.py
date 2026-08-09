@@ -1,6 +1,6 @@
 """
 Hermes Agent 專用嘅薄封裝層,包住 stock_news_db 個 pipeline,淨係露出 4 個 function：
-ingest_news / ingest_article / run_matching / find_favorable_news。
+ingest_news / ingest_article / run_matching / extract_concepts。
 
 stock_news_db 本身唔係一個安裝咗嘅 package,佢嘅 code 一定要喺 cwd=stock_news_db/ 之下
 用 `python -m app.xxx` 先 import 得到(見 stock_news_db/README.md)。呢個 module 一 import
@@ -20,7 +20,19 @@ from typing import Optional, TypedDict
 
 from dotenv import load_dotenv
 
+# financial_news_article/ 呢層本身唔係一個裝咗嘅 package,`app.*` 一定要用呢層做
+# import root 先搵到。呼叫方(Hermes agent)嘅 cwd/sys.path 可以喺任何地方,
+# 所以呢度明確將呢層加落 sys.path,等 `from app.etl...` 喺邊度 import 都得。
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 
+# .env 實際放喺 repo root(financial_news_article/ 嘅太爺目錄),同樣唔理呼叫方個
+# cwd 係邊,讀返呢條絕對路徑,等 DATABASE_URL/API key 一定讀得到。
+load_dotenv(_PROJECT_ROOT.parent.parent.parent / ".env")
+
+
+from app.etl.extract_concepts import process_news_for_concepts, process_article_for_concepts  # noqa: E402
 from app.etl.run_daily import analyze_and_save  # noqa: E402
 from app.etl.run_matching import run_matching as _run_matching  # noqa: E402
 from app.manager.db_manager import DatabaseManager  # noqa: E402
@@ -87,3 +99,31 @@ def run_matching(date: Optional[date | datetime | str] = None) -> None:
     resolved_date = _coerce_date(date)
     _run_matching(resolved_date)
 
+
+def new_extract_concepts(news_id: int) -> dict[str, int]:
+    """
+    幫一則新聞抽 theme/relation,寫入 Mind Map(Concept Graph):LLM 抽取 -> theme 去重
+    (embedding cosine similarity)/新建 -> relation 強化(reinforce)或新增。
+
+    要喺 ingest_news/ingest_article + run_matching 之後先跑——靠 NewsCompanyLink
+    嚟判斷「呢則新聞已確認相關嘅公司」,等 LLM 淨係負責 theme + relation,唔使佢
+    重新判斷邊間公司相關。
+
+    回傳統計 dict：{"themes_created", "themes_reused", "relations_reinforced",
+    "skipped_relations"}。
+    """
+    return process_news_for_concepts(db, news_id)
+
+def article_extract_concepts(article_id: int) -> dict[str, int]:
+    """
+    幫一篇分析文章抽 theme/relation,寫入 Mind Map(Concept Graph):LLM 抽取 -> theme 去重
+    (embedding cosine similarity)/新建 -> relation 強化(reinforce)或新增。
+
+    要喺 ingest_article + run_matching 之後先跑——靠 NewsCompanyLink
+    嚟判斷「呢篇文章已確認相關嘅公司」,等 LLM 淨係負責 theme + relation,唔使佢
+    重新判斷邊間公司相關。
+
+    回傳統計 dict：{"themes_created", "themes_reused", "relations_reinforced",
+    "skipped_relations"}。
+    """
+    return process_article_for_concepts(db, article_id)

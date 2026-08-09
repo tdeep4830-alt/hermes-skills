@@ -43,8 +43,15 @@ class News(Base):
     sentiment: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     # sentiment 例子: "positive" / "negative" / "neutral"（可由 NLP 後補）
 
-    company_links: Mapped[list["NewsCompanyLink"]] = relationship(back_populates="news")
-    tag_links: Mapped[list["NewsTagLink"]] = relationship(back_populates="news")
+    company_links: Mapped[list["NewsCompanyLink"]] = relationship(
+        back_populates="news", cascade="all, delete-orphan"
+    )
+    tag_links: Mapped[list["NewsTagLink"]] = relationship(
+        back_populates="news", cascade="all, delete-orphan"
+    )
+    analysis_article: Mapped[Optional["AnalysisArticle"]] = relationship(
+        back_populates="news", uselist=False, cascade="all, delete-orphan"
+    )
 
 
 class NewsCompanyLink(Base):
@@ -85,10 +92,11 @@ class NewsTagLink(Base):
 from app.models.company import Company  # noqa: E402
 
 
+
 class AnalysisArticle(Base):
     """
-    用品提供分析文章給LLM作總結，記錄文章內的Theme及推論。
-    例如：title/description/sentiment/news_type/tickers/tags
+    用嚟提供分析文章畀 LLM 作總結，記錄文章內嘅 Theme 及推論。
+    例如：title/description/sentiment/thesis/conclusion/tickers/tags。
     """
 
     __tablename__ = "analysis_article"
@@ -104,7 +112,16 @@ class AnalysisArticle(Base):
     tickers: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     tags: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
-    news: Mapped["News"] = relationship()
+    news: Mapped["News"] = relationship(back_populates="analysis_article")
+    # cascade="all, delete-orphan"：刪一篇分析文章嗰陣，佢嘅公司/tag 關聯記錄
+    # 會一齊刪走(但唔會影響到 Company / Tag 本身)——同 News 嗰套 cascade 設計一致。
+    company_links: Mapped[list["ArticleCompanyLink"]] = relationship(
+        back_populates="analysis_article", cascade="all, delete-orphan"
+    )
+    tag_links: Mapped[list["ArticleTagLink"]] = relationship(
+        back_populates="analysis_article", cascade="all, delete-orphan"
+    )
+
 
 class ArticleCompanyLink(Base):
     """分析文章 <-> 公司 嘅多對多關聯表"""
@@ -118,13 +135,15 @@ class ArticleCompanyLink(Base):
         ForeignKey("companies.company_id"), primary_key=True
     )
     is_primary: Mapped[bool] = mapped_column(default=False, nullable=False)
-    # 同 NewsCompanyLink.is_primary 一樣，標記邊間公司先係呢篇分析文章嘅主角。
+    # 標記邊間公司先係呢篇分析文章嘅主角(一篇文可以順帶提到幾間公司，
+    # 但通常淨係一間先係分析員真正focus緊嗰間)。
 
-    analysis_article: Mapped["AnalysisArticle"] = relationship()
-    company: Mapped["Company"] = relationship()
+    analysis_article: Mapped["AnalysisArticle"] = relationship(back_populates="company_links")
+    company: Mapped["Company"] = relationship(back_populates="article_links")
+
 
 class ArticleTagLink(Base):
-    """分析文章 <-> 標籤 嘅多對多關聯表（處理宏觀/其他資產類新聞）"""
+    """分析文章 <-> 標籤 嘅多對多關聯表（處理宏觀/其他資產類文章）"""
 
     __tablename__ = "analysis_article_tag_link"
 
@@ -133,8 +152,8 @@ class ArticleTagLink(Base):
     )
     tag_id: Mapped[int] = mapped_column(ForeignKey("tags.tag_id"), primary_key=True)
 
-    analysis_article: Mapped["AnalysisArticle"] = relationship()
-    tag: Mapped["Tag"] = relationship()
+    analysis_article: Mapped["AnalysisArticle"] = relationship(back_populates="tag_links")
+    tag: Mapped["Tag"] = relationship(back_populates="article_links")
 
 
 class NewsArticleMatch(Base):

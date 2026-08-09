@@ -6,21 +6,43 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, Any
 
 from openai import OpenAI
 
 from dotenv import load_dotenv
 import os
 from app.models import News
+import logging
+from dataclasses import dataclass, field
 
-load_dotenv()  
+
+load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from app.manager.db_manager import DatabaseManager
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"), base_url="https://api.deepseek.com")
 model = "deepseek-v4-pro"
+
+RELATION_TYPES: list[str] = [
+    "benefits",            # 令 to 受惠
+    "threatens",           # 對 to 構成威胁
+    "drives_demand_for",   # 帶動對 to 嘅需求
+    "supplies_to",         # from 供應俾 to
+    "competes_with",       # from 同 to 競爭
+    "regulates",           # from (政策/監管主題) 規管緊 to
+]
+POLARITIES: list[str] = ["positive", "negative", "neutral"]
+
+CONFIDENCE_GUIDANCE = """confidence 評分標準(0-1):
+- 0.8-1.0：文章有明確事實/數據支持嘅斷言
+- 0.5-0.8：分析員/專家明確講出嚟嘅預測或者觀點
+- 0.2-0.5：文章暗示或者間接提及，唔算好肯定
+- 低於 0.2 嘅關係唔好抽取，直接略過"""
+
 
 _ANALYSIS_NEWS_SYSTEM_PROMPT = """你係財經新聞分析員。閱讀用戶提供嘅新聞原文，淨係回覆一個 JSON object，
 唔好加任何解釋文字，唔好用 markdown code fence。JSON schema:
@@ -77,6 +99,50 @@ _ANALYSIS_ARTICLE_SYSTEM_PROMPT = """你係財經新聞分析員。閱讀用戶�
 }"""
 
 
+EXTRACTION_TOOL_SCHEMA: dict[str, Any] = {
+    "name": "record_extraction",
+    "description": "記錄由文章入面抽取到嘅市場主題，同埋主題之間/主題同公司之間嘅因果或影響關係。",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "themes": {
+                "type": "array",
+                "description": "文章入面提到嘅市場主題",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "主題名，簡短(建議<15字)"},
+                        "description": {"type": "string", "description": "一句話解釋呢個主題"},
+                    },
+                    "required": ["name"],
+                },
+            },
+            "relations": {
+                "type": "array",
+                "description": "主題之間，或者主題同已確認公司之間嘅因果/影響關係",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "from_theme": {"type": "string", "description": "邊個主題(必須係上面 themes 入面嘅名)"},
+                        "to_type": {"type": "string", "enum": ["theme", "company"]},
+                        "to_ref": {
+                            "type": "string",
+                            "description": "to_type='theme' 填主題名；to_type='company' 填 ticker(必須係已確認公司清單入面嘅)",
+                        },
+                        "relation_type": {"type": "string", "enum": RELATION_TYPES},
+                        "polarity": {"type": "string", "enum": POLARITIES},
+                        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                        "reasoning": {"type": "string", "description": "一句話解釋點解有呢個關係"},
+                    },
+                    "required": ["from_theme", "to_type", "to_ref", "relation_type", "polarity", "confidence"],
+                },
+            },
+        },
+        "required": ["themes", "relations"],
+    },
+}
+
+
 def AI_analyze(text: str, *, model: str = "deepseek-v4-pro", prompt) -> dict:
     """叫 Claude 分析新聞原文，回傳結構化結果 。"""
     response = client.chat.completions.create(
@@ -100,16 +166,178 @@ def AI_analyze(text: str, *, model: str = "deepseek-v4-pro", prompt) -> dict:
     return json.loads(raw)
 
 
+@dataclass
+class ExtractedTheme:
+    name: str
+    description: str = ""
+
+
+@dataclass
+class ExtractedRelation:
+    from_theme: str
+    to_type: str  # "theme" | "company"
+    to_ref: str  # to_type="theme" 就係 theme name；to_type="company" 就係 ticker
+    relation_type: str
+    polarity: str = "positive"
+    confidence: float = 0.5
+    reasoning: str = ""
+
+
+@dataclass
+class ExtractionResult:
+    themes: list[ExtractedTheme] = field(default_factory=list)
+    relations: list[ExtractedRelation] = field(default_factory=list)
+
+  
+def build_extraction_prompt(
+    article_title: str,
+    article_content: str,
+    known_companies: list[dict],
+    grounding_themes: list[str],
+    *,
+    max_relations: int = 5,
+) -> str:
+    """
+    純function,唔涉及任何API call,方便獨立test。
+
+    known_companies: [{"ticker": "AAPL", "name": "Apple Inc."}, ...]
+                      呢啲已經係經過你獨立嘅matching pipeline確認同呢篇文相關嘅公司。
+    grounding_themes: 現存主題名清單 —— Concept Grounding 嘅核心，
+                       叫LLM有得揀就攞返現成嘅名，減少之後要靠embedding先去重嘅重複。
+    """
+    companies_block = (
+        "\n".join(f"- {c['ticker']}: {c['name']}" for c in known_companies)
+        or "(冇已確認相關嘅公司)"
+    )
+    grounding_block = "\n".join(f"- {name}" for name in grounding_themes) or "(暫時未有現存主題可以參考)"
+    relation_types_block = ", ".join(RELATION_TYPES)
+
+    return f"""你係一個財經新聞分析助手，負責由文章入面抽取「市場主題」(theme)同埋佢哋之間嘅
+因果/影響關係(relation)，用嚟建立一個持續生長嘅市場知識圖譜(Mind Map)。
+
+# 文章標題
+{article_title}
+
+# 文章內容
+{article_content}
+
+# 已經確認同呢篇文相關嘅公司
+（呢啲係經獨立配對程序確認嘅，你抽取 relation 嗰陣，to_type="company" 淨係可以喺呢個清單入面揀，
+唔好自己另外提出第啲公司、亦唔好自己估佢哋嘅 ticker）
+{companies_block}
+
+# 現存主題名（Concept Grounding）
+（如果文章講緊嘅主題同下面某一個相符或者好相近，請直接攞返呢個名嚟用，唔好自己作一個新講法；
+真係搵唔到啱嘅先自己作新名）
+{grounding_block}
+
+# 你嘅任務
+1. 抽取文章入面提到嘅市場主題(theme)，簡短、概念化(例如「AI伺服器需求上升」、「加息預期」)。
+2. 判斷呢啲主題之間，或者主題同上面已確認公司之間，有冇清楚、文章有支持嘅因果/影響關係。
+3. relation_type 必須由以下揀一個: {relation_types_block}
+4. polarity 必須係 positive / negative / neutral。
+5. {CONFIDENCE_GUIDANCE}
+6. 淨係抽取文章有清楚支持嘅關係，唔好過度推論或者穿鑿附會。最多抽取 {max_relations} 條你最有信心嘅 relation。
+7. 如果文章冇任何明確嘅因果關係，themes/relations 可以係空 list——唔好為咗填滿而勉強作嘢出嚟。
+8. 重要：themes 呢個 list 要包括「所有喺 relations 入面用到嘅 theme 名」，
+   即使呢個 theme 唔係文章嘅主角、係你由「現存主題名」清單度攞返嚟做 relation 目標嘅，
+   都要一併列喺 themes 入面(description 可以留空)。唔好淨係列「新提到」嘅主題。
+
+用 record_extraction 呢個 tool 嚟回答。"""
+
+
+def _parse_and_validate(raw: dict, *, known_companies: list[dict]) -> ExtractionResult:
+    """
+    純function,將LLM嘅原始輸出做guardrail驗證:
+    - relation_type 唔喺固定enum入面 -> 丟棄
+    - to_type="company" 但唔喺已確認公司清單入面 -> 丟棄(防止LLM hallucinate公司)
+    - confidence clamp 去 [0, 1]
+    - 缺少必要欄位 -> 丟棄
+    每次丟棄都會 log 低,方便你之後review LLM輸出質素。
+    """
+    known_tickers = {c["ticker"] for c in known_companies}
+
+    themes: list[ExtractedTheme] = []
+    for item in raw.get("themes", []) or []:
+        name = (item.get("name") or "").strip()
+        if not name:
+            logger.warning("跳過冇 name 嘅 theme: %r", item)
+            continue
+        themes.append(ExtractedTheme(name=name, description=(item.get("description") or "").strip()))
+
+    relations: list[ExtractedRelation] = []
+    for item in raw.get("relations", []) or []:
+        from_theme = (item.get("from_theme") or "").strip()
+        to_type = item.get("to_type")
+        to_ref = (item.get("to_ref") or "").strip()
+        relation_type = item.get("relation_type")
+        polarity = item.get("polarity") or "positive"
+        confidence_raw = item.get("confidence")
+
+        if not from_theme or not to_ref:
+            logger.warning("跳過唔完整嘅 relation(缺 from_theme/to_ref): %r", item)
+            continue
+        if relation_type not in RELATION_TYPES:
+            logger.warning("relation_type '%s' 唔喺允許嘅 enum 入面,跳過: %r", relation_type, item)
+            continue
+        if to_type not in ("theme", "company"):
+            logger.warning("to_type '%s' 無效,跳過: %r", to_type, item)
+            continue
+        if to_type == "company" and to_ref not in known_tickers:
+            logger.warning("relation 指住一間未確認嘅公司 '%s',跳過: %r", to_ref, item)
+            continue
+        if polarity not in POLARITIES:
+            polarity = "positive"
+        try:
+            confidence = float(confidence_raw)
+        except (TypeError, ValueError):
+            logger.warning("confidence '%r' 無效,跳過: %r", confidence_raw, item)
+            continue
+        confidence = max(0.0, min(1.0, confidence))
+
+        relations.append(
+            ExtractedRelation(
+                from_theme=from_theme,
+                to_type=to_type,
+                to_ref=to_ref,
+                relation_type=relation_type,
+                polarity=polarity,
+                confidence=confidence,
+                reasoning=(item.get("reasoning") or "").strip(),
+            )
+        )
+
+    return ExtractionResult(themes=themes, relations=relations)
+
+
+def extract_concepts_and_relations(
+    article_title: str,
+    article_content: str,
+    known_companies: list[dict],
+    grounding_themes: list[str],
+    *,
+    max_relations: int = 5,
+    client: Optional[Any] = None,
+    model : Optional[str] = model,
+  ) -> ExtractionResult:
+  client = client or OpenAI(api_key=os.getenv("OPENAI_API_KEY"), base_url="https://api.deepseek.com")
+  model = model or "deepseek-chat"
+
+  prompt = build_extraction_prompt(
+      article_title, article_content, known_companies, grounding_themes, max_relations=max_relations
+  )
+
+  response = client.messages.create(
+      model=model,
+      max_tokens=2048,
+      tools=[EXTRACTION_TOOL_SCHEMA],
+      tool_choice={"type": "tool", "name": "record_extraction"},
+      messages=[{"role": "user", "content": prompt}],
+  )
+
+  tool_use_block = next(b for b in response.content if b.type == "tool_use")
+  return _parse_and_validate(tool_use_block.input, known_companies=known_companies)
 
 
 
-if __name__ == "__main__":
-    news = """Nvidia (NVDA) is investing $1B in South Korean internet conglomerate Naver (NHNCF) to expand the latter's AI data center currently under construction.
-The capital influx will allow the site to grow from the planned 55 megawatts to 200 megawatts using the DSX platform.
-Brookfield (BN) will fund up to another $9B through a nonbinding term sheet.
-Separately, Nvidia (NVDA) is expanding a collaboration with SK Group that includes constructing a 2-gigawatt Vera Rubin DSX AI factory.
-In June, Nvidia (NVDA) said SK Telecom (SKM) plans to build a gigawatt-scale AI Cloud in South Korea.
-SK hynix (SKHY) is also partnering with Nvidia to develop next-generation AI memory."""
 
-    result = AI_analyze(news, prompt=_ANALYSIS_NEWS_SYSTEM_PROMPT)
-    print(json.dumps(result, indent=2, ensure_ascii=False))

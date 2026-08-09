@@ -10,7 +10,9 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
+    DATABASE_URL: str = "postgresql+psycopg2://postgres.gvzgpfgvauvxpamwvuyu:23424027Chy!@aws-0-eu-west-1.pooler.supabase.com:5432/postgres"
 
+    FINNHUB_API_KEY : str | None = None
     # Match news to articles 嘅預設參數，日後有多啲數據先再校準。
     # Layer 2 嘅預設參數，日後有多啲數據先再校準。
     SHARED_COMPANY_RELEVANCE: float = 0.6

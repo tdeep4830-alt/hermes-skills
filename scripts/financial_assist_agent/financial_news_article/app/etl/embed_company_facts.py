@@ -15,11 +15,13 @@ company_id 呢啲 row 一律存 NULL，公司關係查返 news_company_link / an
      （即係文字內容一模一樣）-> 直接攞現成嘅 embedding vector 嚟用，唔使再 call API
 """
 from __future__ import annotations
+from __future__ import annotations
 
+from typing import Any, Optional
+from app.models.concept import EMBEDDING_DIM
 import hashlib
 import logging
 from typing import Iterable, Optional
-
 from openai import OpenAI
 from dotenv import load_dotenv
 import os
@@ -41,6 +43,9 @@ from app.models import (
     SupplyChainAndLogistics,
     Technology,
 )
+import sys
+
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +54,7 @@ EMBEDDING_MODEL = "text-embedding-3-small"
 # 呢度要用返正牌 OpenAI API（唔係 LLM_analyze.py 嗰個指去 DeepSeek base_url 嘅 client）——
 # 用獨立嘅 settings.EMBEDDING_API_KEY（喺 .env 度填一個有 embeddings 權限嘅真 OpenAI key），
 # 唔好同 settings.OPENAI_API_KEY 撈埋（嗰個而家實際上係俾 DeepSeek client 用嘅 key）。
+load_dotenv(dotenv_path=Path(__file__).parent.parent.parent.parent.parent.parent / ".env")
 api_key = os.getenv("EMBEDDING_API_KEY")
 if not api_key:
     raise ValueError("EMBEDDING_API_KEY 未喺環境變數度設定，請喺 .env 度填一個有 embeddings 權限嘅真 OpenAI key")
@@ -187,6 +193,36 @@ def embed_company_facts() -> None:
         counts[outcome] += 1
 
     logger.info("新 embed: %d, 重用現成 embedding: %d, 跳過(冇變): %d", counts["embedded"], counts["reused"], counts["skipped"])
+
+
+def embed_text(text: str, *, client: Optional[Any] = None, model: Optional[str] = None) -> list[float]:
+    """單段文字轉做一個 embedding 向量。"""
+    return embed_texts([text], client=client, model=model)[0]
+
+
+def embed_texts(
+    texts: list[str], *, client: Optional[Any] = None, model: Optional[str] = None
+) -> list[list[float]]:
+    """
+    Batch 版本——攞一個 list 嘅文字，一次過 call API 攞返晒啲向量。
+    比逐段 call 平好多、快好多，一定要用呢個做批量處理，唔好自己寫 for loop 逐個 embed_text()。
+    """
+    if not texts:
+        return []
+    client = client or _embedding_client
+    model = model or settings.EMBEDDING_MODEL
+
+    response = client.embeddings.create(model=model, input=texts)
+    vectors = [item.embedding for item in response.data]
+
+    for vector in vectors:
+        if len(vector) != EMBEDDING_DIM:
+            raise ValueError(
+                f"embedding 維度 ({len(vector)}) 同 EMBEDDING_DIM ({EMBEDDING_DIM}) 唔夾， "
+                "換咗 model 記得同時改 app/models/concept.py 嘅 EMBEDDING_DIM 並開新 migration。"
+            )
+
+    return vectors
 
 
 if __name__ == "__main__":

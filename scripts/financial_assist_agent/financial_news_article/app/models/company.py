@@ -71,22 +71,45 @@ class Company(Base, TimestampMixin):
 
     sector: Mapped[Optional["Sector"]] = relationship(back_populates="companies")
     industry: Mapped[Optional["Industry"]] = relationship(back_populates="companies")
-    profiles: Mapped[list["CompanyProfile"]] = relationship(back_populates="company")
-    products: Mapped[list["Product"]] = relationship(back_populates="company")
-    technologies: Mapped[list["Technology"]] = relationship(back_populates="company")
-    services: Mapped[list["Service"]] = relationship(back_populates="company")
+    profiles: Mapped[list["CompanyProfile"]] = relationship(
+        back_populates="company", cascade="all, delete-orphan"
+    )
+    products: Mapped[list["Product"]] = relationship(
+        back_populates="company", cascade="all, delete-orphan"
+    )
+    technologies: Mapped[list["Technology"]] = relationship(
+        back_populates="company", cascade="all, delete-orphan"
+    )
+    services: Mapped[list["Service"]] = relationship(
+        back_populates="company", cascade="all, delete-orphan"
+    )
     governmental_programs_and_regulations: Mapped[list["GovernmentalProgramAndRegulation"]] = relationship(
-        back_populates="company"
+        back_populates="company", cascade="all, delete-orphan"
     )
-    manufacturing_processes: Mapped[list["ManufacturingProcess"]] = relationship(back_populates="company")
-    supply_chains_and_logistics: Mapped[list["SupplyChainAndLogistics"]] = relationship(back_populates="company")
-    competitors: Mapped[list["Competitor"]] = relationship(back_populates="company")
-    risks: Mapped[list["Risk"]] = relationship(back_populates="company")
+    manufacturing_processes: Mapped[list["ManufacturingProcess"]] = relationship(
+        back_populates="company", cascade="all, delete-orphan"
+    )
+    supply_chains_and_logistics: Mapped[list["SupplyChainAndLogistics"]] = relationship(
+        back_populates="company", cascade="all, delete-orphan"
+    )
+    competitors: Mapped[list["Competitor"]] = relationship(
+        back_populates="company", cascade="all, delete-orphan"
+    )
+    risks: Mapped[list["Risk"]] = relationship(
+        back_populates="company", cascade="all, delete-orphan"
+    )
     management_discussions_and_analyses: Mapped[list["ManagementDiscussionAndAnalysis"]] = relationship(
-        back_populates="company"
+        back_populates="company", cascade="all, delete-orphan"
     )
-    legal_and_regulatory_issues: Mapped[list["LegalAndRegulatoryIssues"]] = relationship(back_populates="company")
-    news_links: Mapped[list["NewsCompanyLink"]] = relationship(back_populates="company")
+    legal_and_regulatory_issues: Mapped[list["LegalAndRegulatoryIssues"]] = relationship(
+        back_populates="company", cascade="all, delete-orphan"
+    )
+    news_links: Mapped[list["NewsCompanyLink"]] = relationship(
+        back_populates="company", cascade="all, delete-orphan"
+    )
+    article_links: Mapped[list["ArticleCompanyLink"]] = relationship(
+        back_populates="company", cascade="all, delete-orphan"
+    )
 
 
 class CompanyProfile(Base, TimestampMixin):

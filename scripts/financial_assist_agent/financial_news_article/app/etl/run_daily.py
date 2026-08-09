@@ -9,10 +9,7 @@ from typing import Optional
 
 from app.database import get_session
 from app.manager.db_manager import DatabaseManager
-from app.etl.clean_news import classify_news_type, match_companies, normalize_article
 from app.etl.embed_company_facts import embed_article, embed_news
-from app.etl.fetch_news import fetch_raw_news
-from app.etl.load_news import load_article
 from app.etl.LLM_analyze import AI_analyze, _ANALYSIS_NEWS_SYSTEM_PROMPT, _ANALYSIS_COMPANY_SYSTEM_PROMPT,  _ANALYSIS_RISK_SYSTEM_PROMPT, _ANALYZE_LEGAL_PROCEEDINGS_PROMPT, _ANALYSIS_ARTICLE_SYSTEM_PROMPT
 from app.etl.fetch_company import fetch_company_profile_by_SEC, fetch_company_profile_by_yfinance
 from app.models import (
@@ -35,18 +32,12 @@ from app.models import (
 from app.models.company import risk_type_enum
 import logging
 
-logging.basicConfig(level=logging.INFO)
+from app.etl.clean_news import clean_and_prepare
+from app.etl.fetch_news import fetch_all
+from app.etl.load_news import load_news_items
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
-
-
-
-def build_company_lookup(session) -> dict[str, int]:
-    companies = session.query(Company).all()
-    lookup: dict[str, int] = {}
-    for c in companies:
-        lookup[c.ticker] = c.company_id
-        lookup[c.name_en] = c.company_id
-    return lookup
 
 
 
@@ -259,6 +250,7 @@ def analyze_and_save(
 
     db = DatabaseManager()
     analysis = AI_analyze(text, model=model, prompt=prompt)
+    effective_published_at = published_at or datetime.now(timezone.utc)
 
     company_ids = []
     for ticker in _as_list(analysis.get("tickers")):
@@ -279,16 +271,17 @@ def analyze_and_save(
             content=text,
             source=source,
             url=url,
-            published_at=published_at or datetime.now(timezone.utc),
+            published_at=effective_published_at,
             news_type=analysis.get("news_type", "company"),
             sentiment=analysis.get("sentiment"),
             company_ids=company_ids,
             tag_names=_as_list(analysis.get("tags")),
         )
-        try:    
+        try:
             _embed_after_save(embed_news, news.news_id, db=db)
         except Exception:
             logger.exception("即時 embed_news(%s) 失敗，等下次 embed_company_facts() batch job 補返", news.news_id)
+
         return news
     
     elif type_of_analysis == "article":
@@ -298,7 +291,7 @@ def analyze_and_save(
             content=text,
             source=source,
             url=url,
-            published_at=published_at or datetime.now(timezone.utc),
+            published_at=effective_published_at,
             thesis=analysis.get("thesis"),
             conclusion=analysis.get("conclusion"),
             sentiment=analysis.get("sentiment"),
@@ -309,94 +302,43 @@ def analyze_and_save(
         try:
             _embed_after_save(embed_article, article.news_id, db=db)
         except Exception:
+
             logger.exception("即時 embed_article(%s) 失敗，等下次 embed_company_facts() batch job 補返", article.news_id)
+
         return article
 
 
+def run() -> dict[str, int]:
+    db = DatabaseManager()
+    try:
+        known_companies = [
+            {"company_id": c.company_id, "ticker": c.ticker, "name_en": c.name_en}
+            for c in db.list_companies(limit=1000)
+        ]
+        tracked_tickers = [c["ticker"] for c in known_companies]
+
+        logger.info("開始 fetch 新聞(RSS + Hacker News + Finnhub)...")
+        raw_items = fetch_all(tracked_tickers=tracked_tickers)
+        logger.info("Fetch 完成，一共 %d 條原始新聞", len(raw_items))
+
+        cleaned_items = clean_and_prepare(raw_items, known_companies)
+        logger.info(
+            "Clean 完成(AI/Tech relevance filter + dedup)，剩返 %d 條(篩走 %d 條)",
+            len(cleaned_items),
+            len(raw_items) - len(cleaned_items),
+        )
+
+        stats = load_news_items(db, cleaned_items)
+        logger.info(
+            "寫入完成：新增 %d 條，跳過(已存在) %d 條，跳過(資料不完整) %d 條",
+            stats["inserted"],
+            stats["skipped_existing"],
+            stats["skipped_invalid"],
+        )
+        return stats
+    finally:
+        db.dispose()
 
 
 if __name__ == "__main__":
-    analysis_content = """Alibaba (BABA) has finally delivered some good numbers in the recent earnings despite worries about the impact of chip restrictions and tariffs. Alibaba Cloud reported 26% YoY revenue growth, while the international commerce business reported 19% YoY growth. The China e-commerce business also picked up some momentum with 10% YoY growth. Both Alibaba Cloud and the international commerce segment showed a good EBITA trend, while there was a 21% dip in the EBITA of the China e-commerce segment. The most important factor in favor of Alibaba is that these results were delivered while many analysts cautioned about the geopolitical tensions. In my previous article, it was mentioned that the tariff war could lead to more fiscal spending in China, which might help Alibaba.
-
-Alibaba's Qwen3 AI model is already on the leaderboard and is often listed among the top ten AI models. The recent news about the launch of a new AI chip by Alibaba should help the company build chips that are ideal for its operations instead of relying on Nvidia (NVDA) or other AI chip makers. The recent ban by China on tech companies from buying Nvidia chips will be a big boost for Alibaba's AI chip development effort. According to a recent CCTV broadcast, Alibaba's AI chips are now giving a performance that matches Nvidia's H20 chips, which were allowed in China. This should help improve the growth trajectory of Alibaba Cloud. According to a Canalys report, Alibaba Cloud has 33% market share in China's cloud infrastructure services market, giving it the market leadership position.
-
-For the current fiscal year, Alibaba is expected to show EPS of $7.86, which gives the stock a forward PE of 20. However, there is a big gap between low and high EPS estimates, which reflects the uncertainty regarding the EPS trajectory in the next few quarters. It is likely that we will see a higher revenue and EBITA share from Alibaba Cloud and international operations, which should provide a strong tailwind for the company and improve the sentiment around the stock.
-
-Alibaba Cloud's Growth Potential is Underestimated
-In my previous article, it was mentioned that strong double-digit growth in Alibaba Cloud could improve the stock momentum. We have seen this in the current earnings. Despite missing the EPS and revenue estimates, Alibaba stock has surged by 40% in the last month due to better YoY growth numbers in Alibaba Cloud and news about AI chips and models being priced in.
-
-Recent earnings numbers of Alibaba.
-Recent earnings numbers of Alibaba (Seeking Alpha)
-
-Alibaba Cloud reported revenue of $4.6 billion in the current fiscal year. However, this is still quite modest revenue when we compare it to the revenue numbers of the Big Three cloud companies in the U.S., which include Amazon's (AMZN) AWS, Microsoft's (MSFT) Azure, and Google Cloud (GOOG). The cloud business penetration in China is quite low compared to the overall economic size. As an example, Google Cloud is in the third position among cloud players in the U.S. and was still able to deliver revenue of $13.6 billion in the recent quarter. This is three times that of Alibaba Cloud.
-
-Recent numbers by Alibaba.
-Recent numbers by Alibaba (Company Filings)
-
-As the overall cloud market increases in China, we could see a faster growth trajectory in Alibaba Cloud. It is also trying to increase its presence in international locations, especially in Southeast Asia. It recently announced new data centers in Malaysia and the Philippines.
-
-Alibaba's Qwen3 model is beating DeepSeek on AI leaderboard.
-Alibaba's Qwen3 model is beating DeepSeek on the AI leaderboard (Artificial Analysis)
-
-A big tailwind for Alibaba Cloud is the competitive AI models launched by the company. Alibaba's Qwen3 model is now beating the popular DeepSeek among AI models in China. Alibaba has more resources to deploy these AI tools and services for customers compared to many other cloud players in China. This puts Alibaba in a better position to maintain and improve its market leadership position in terms of AI models in the next few iterations.
-
-Ban on Nvidia Chips and New Customers for Alibaba AI Chips
-China has recently banned the use of Nvidia's chips for technology companies operating within China. There was already a big push for domestic AI chip development. There was an earlier broadcast by CCTV showing that Alibaba's AI chips are giving comparable performance to Nvidia's H20 chips. We need to wait for independent benchmarks to show the relative performance of Alibaba's AI chips. But this broadcast shows that Alibaba's AI chip development is also strongly supported by the regulators. According to Reuters, Alibaba's chip unit, T-Head, supplied 72% of the 23,000 AI chips used in building a recent $390 million data center by China Unicom.
-
-Chart
-Data by YCharts
-Alibaba's stock has already built good momentum in the last few weeks as news about these AI chips was released. We can compare the 40% jump in Alibaba's stock price with the stagnant price in Nvidia over the last month and see the impact of these new AI regulations in China. Despite the recent bull run in Alibaba stock, the valuation multiple of Alibaba is still significantly lower than Nvidia, as mentioned below. This can give investors looking for an AI bet a better entry point.
-
-Comparison of Nvidia's H20 chips with Alibaba's.
-Comparison of Nvidia's H20 chips with Alibaba's (CCTV, SCMP)
-
-According to a recent Canalys report, Alibaba Cloud has a big lead in China's cloud infrastructure market. The Big Three in China's cloud market have a market share of 61%, which is lower than the Big Three players in the U.S. It is likely that as the cloud market matures in China, the bigger players will corner a higher market share. This can help Alibaba Cloud deliver a strong YoY growth trajectory in the next few years and also improve the EBITA margin, which currently stands at only 9%, compared to the close to 30% operating margin of Amazon's AWS.
-
-Economies of scale help improve the margins rapidly within the cloud business. We have seen this with Google Cloud, which reported a 20% operating margin in the recent quarter compared to 10% in the year-ago quarter and a negative margin a few years back.
-
-Rapid operating margin improvement in Google Cloud.
-Rapid operating margin improvement in Google Cloud (Google Filing)
-
-Besides economies of scale, Alibaba has an added advantage due to the recent ban on Nvidia's chips in China. This should allow the company to use its own AI chips and AI models within Alibaba Cloud, which can increase customer loyalty and also give Alibaba better pricing power in this segment. Alibaba has already cornered 33% of the cloud infrastructure segment in China, according to a recent Canalys report.
-
-Market share of cloud players in China.
-Market share of cloud players in China (Canalys)
-
-International Operations Move Towards Profitability
-Alibaba has been investing heavily in international operations to increase the growth runway and provide better geographical diversification for the company. In the recent quarter, the international commerce segment reported YoY growth of 19%. There has also been a big reduction in EBITA losses in this segment. In the year-ago quarter, the international commerce segment reported losses of RMB 3.7 billion. This has decreased to only RMB 57 million, or $8 million of losses in the current quarter.
-
-EBITA numbers of Alibaba.
-EBITA numbers of Alibaba (Company Filings)
-
-It should be noted that Alibaba faces intense competition in many international locations, particularly from TikTok Shop. Under this pressure, Alibaba's international commerce group has been able to reduce losses by over half a billion dollars in the recent quarter compared to the year-ago quarter. The management seems to be investing more in AI and Alibaba Cloud infrastructure while reducing losses in the international commerce segment.
-
-Mixed Bag in Alibaba's China E-commerce Group
-Alibaba's China e-commerce group has started showing good numbers in terms of revenue growth. In the recent quarter, the YoY revenue growth was 10% in this segment. This is much higher than the low single-digit numbers in the last few quarters. However, on the negative side, the EBITA from this segment dropped by 21% to $5.3 billion. The China e-commerce group is still the main contributor for EBITA, and any drop in this segment leads to a big dip in consolidated EBITA. In the current quarter, the consolidated EBITA dropped by 14% despite improvement in Alibaba Cloud and the international commerce segment.
-
-The local rivals continue to put pressure on the pricing ability of Alibaba by giving big discounts to customers. Some of the EBITA dip in the China e-commerce business could also be due to tariffs, which have had a negative impact on the supply chain for many items in China. A bigger-than-expected decline in EBITA of this important segment can hurt the cash flow of the company. This would also limit the ability of Alibaba to invest aggressively in new AI tools and services.
-
-An Attractive Price Among AI Companies
-There has been growing talk of an AI bubble in recent months. The valuation of many AI companies has become too expensive. Investors looking for an AI investment can look at Alibaba as a possible option. Alibaba stock offers modest valuation where its forward PE is 20.7 for the fiscal year ending March 2026 and only 16 for the fiscal year ending March 2027. If Alibaba comes out as the main leader in the AI race within China, Wall Street could significantly improve the valuation multiple for the company.
-
-The consensus EPS estimate for the current fiscal year is $7.86, which is a decline of 13.39% from a year ago. At this EPS, the stock is trading at a multiple of 20.7. However, there is a big gap between the low and high EPS estimates for the current fiscal year. The lowest EPS estimate is $6.5, while the highest is $10, which is 50% higher than the low EPS estimate. A big reason behind this gap is the uncertainty of tariffs. However, the fundamentals are still very good, and Alibaba stock could certainly gain a higher multiple as the importance of AI services and Alibaba Cloud increases.
-
-EPS projection of Alibaba
-EPS projection of Alibaba (Seeking Alpha)
-
-Chart
-Data by YCharts
-Alibaba's diversified business along with the cloud segment can be compared with Amazon, while the new AI chips built by Alibaba are replacing Nvidia's chips in China, according to recent reports. Alibaba's forward PE of 20.7 is still significantly lower than Nvidia's forward PE of 40 and Amazon's forward PE of 35. As mentioned earlier, Alibaba supplied 72% of the AI chips that were powering a big data center for China Unicom. This shows the customer demand for Alibaba's AI chips within China. We could also see better iterations of Alibaba's AI chips in the next few quarters.
-
-Alibaba's stock could be at an inflection point as new AI chips are launched and regulators support the development of domestic AI tech.
-
-Investor Takeaway
-Alibaba Cloud has reported 26% YoY revenue growth. The EBITA has increased to $412 million in the recent quarter, or $1.6 billion on an annualized basis. Alibaba Cloud is the market leader in China and is launching new AI models and tools rapidly. The new AI chips can also help improve the brand position of its cloud services. However, China's cloud market is still quite small compared with the U.S. when we look at the relative GDP size of the two countries. This gives a longer growth runway for Alibaba Cloud. Rapid international expansion will also improve the growth potential of Alibaba Cloud.
-
-There has been a big reduction in losses in international e-commerce business, which can help the management divert more resources to its AI initiatives. At the same time, it will be important to gauge the future EBITA direction of Alibaba's China e-commerce business, which contributes the biggest share of cash flow to the company. Alibaba's valuation is still very modest, and it does not reflect the rapid improvement in its AI chips and services. This makes the stock quite attractive at the current price."""
-
-    try:
-        result = analyze_and_save("article", analysis_content, source="Example Source", url="https://example.com/news/nvidia-investment", published_at=datetime.now(timezone.utc))
-        logger.info("新聞已經分析同存入 DB: %s", result)
-    except Exception as e:
-        logger.error("分析新聞時出錯: %s", e)
-    
+    run()

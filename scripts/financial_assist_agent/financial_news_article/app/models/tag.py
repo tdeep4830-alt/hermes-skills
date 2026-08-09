@@ -19,6 +19,10 @@ class Tag(Base):
     tag_type: Mapped[str] = mapped_column(String(50), nullable=False)
     # tag_type 例子: "macro" / "asset_class" / "theme" / "industry"
 
+    article_links: Mapped[list["ArticleTagLink"]] = relationship(
+        back_populates="tag", cascade="all, delete-orphan"
+    )
+
 
 # tag_category_rules.target_field 合法值。
 tag_rule_target_fields = ("product_category", "industry", "sector")

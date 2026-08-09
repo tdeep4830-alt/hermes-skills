@@ -29,6 +29,7 @@ from app.models.news_and_article import (
     NewsArticleMatch,
 )
 from app.models.embedding import CompanyFactEmbedding
+from app.models.concept import Concept, ConceptRelation, ConceptRelationEvidence
 
 __all__ = [
     "Base",
@@ -56,4 +57,7 @@ __all__ = [
     "ArticleTagLink",
     "NewsArticleMatch",
     "CompanyFactEmbedding",
+    "Concept",
+    "ConceptRelation",
+    "ConceptRelationEvidence"
 ]

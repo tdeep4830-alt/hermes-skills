@@ -9,8 +9,8 @@ from dotenv import load_dotenv
 import os
 
 load_dotenv()  # 確保 config.py 嘅 settings 係已經 load 咗 .env 嘅，唔會有空值
-
-database_url = os.getenv("DATABASE_URL")
+settings = Settings()
+DATABASE_URL = settings.DATABASE_URL
 
 
 class SessionMixin:
