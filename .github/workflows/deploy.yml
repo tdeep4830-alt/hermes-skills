@@ -25,13 +25,13 @@ jobs:
         run: python tests/validate_skills.py
 
       - name: Run tests articles model
-        run: pytest tests/test_article_model.py
+        run: python tests/test_article_model.py
 
       - name: extract concept from articles
-        run: pytest tests/test_extract_concepts.py
+        run: python tests/test_extract_concepts.py
 
       - name: test pipeline
-        run: pytest tests/test_pipeline_integration.py
+        run: python tests/test_pipeline_integration.py
 
   # ── 第二步：部署到 VPS ──
   deploy:
