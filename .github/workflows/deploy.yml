@@ -25,10 +25,10 @@ jobs:
         run: python tests/validate_skills.py
 
       - name: Run tests articles model
-        run: pytest tests/test_articles_model.py
+        run: pytest tests/test_article_model.py
 
       - name: extract concept from articles
-        run: pytest tests/test_extract_concept.py
+        run: pytest tests/test_extract_concepts.py
 
       - name: test pipeline
         run: pytest tests/test_pipeline_integration.py
