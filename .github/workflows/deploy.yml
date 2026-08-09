@@ -10,6 +10,22 @@ jobs:
   # ── 第一步：驗證 Skills 格式 ──
   test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: hermes_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql+psycopg2://postgres:postgres@localhost:5432/hermes_test
     steps:
       - uses: actions/checkout@v4
 
@@ -19,19 +35,20 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install pytest pyyaml
+        run: pip install -r requirements.txt
+
+      - name: Enable pgvector extension
+        run: PGPASSWORD=postgres psql -h localhost -U postgres -d hermes_test -c "CREATE EXTENSION IF NOT EXISTS vector;"
+
+      - name: Run migrations
+        working-directory: scripts/financial_assist_agent/financial_news_article
+        run: alembic upgrade head
 
       - name: Validate skills
         run: python tests/validate_skills.py
 
-      - name: Run tests articles model
-        run: python tests/test_article_models.py
-
-      - name: extract concept from articles
-        run: python tests/test_extract_concepts.py
-
-      - name: test pipeline
-        run: python tests/test_pipeline_integration.py
+      - name: Run tests
+        run: pytest tests/ -v
 
   # ── 第二步：部署到 VPS ──
   deploy:

@@ -1,4 +1,10 @@
+from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# .env 實際放喺 repo root(financial_news_article/ 嘅太爺目錄)，用絕對路徑讀
+# 就唔使理呼叫方個 cwd 係邊(直接跑 script、喺 tests/ 入面跑 pytest 等等都得)。
+_REPO_ROOT_ENV = Path(__file__).resolve().parents[4] / ".env"
 
 
 class Settings(BaseSettings):
@@ -8,9 +14,9 @@ class Settings(BaseSettings):
     唔使改任何 code。
     """
 
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_file=_REPO_ROOT_ENV, extra="ignore")
 
-    DATABASE_URL: str = "postgresql+psycopg2://postgres.gvzgpfgvauvxpamwvuyu:23424027Chy!@aws-0-eu-west-1.pooler.supabase.com:5432/postgres"
+    DATABASE_URL: str
 
     FINNHUB_API_KEY : str | None = None
     # Match news to articles 嘅預設參數，日後有多啲數據先再校準。
