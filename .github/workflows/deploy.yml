@@ -26,8 +26,8 @@ jobs:
           --health-retries 5
     env:
       DATABASE_URL: postgresql+psycopg2://postgres:postgres@localhost:5432/hermes_test
-      EMBEDDING_API_KEY: ${{ secrets.EMBEDDING_API_KEY }}
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      EMBEDDING_API_KEY: ${{ secrets.EMBEDDING_API_KEY-OPEN_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY-OPEN_API_KEY }}
     steps:
       - uses: actions/checkout@v4
 
