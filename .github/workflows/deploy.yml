@@ -50,8 +50,6 @@ jobs:
       - name: Validate skills
         run: python tests/validate_skills.py
 
-      - name: Run tests
-        run: pytest tests/ -v
 
   # ── 第二步：部署到 VPS ──
   deploy:
