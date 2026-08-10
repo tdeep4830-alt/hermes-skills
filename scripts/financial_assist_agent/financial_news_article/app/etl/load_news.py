@@ -31,13 +31,18 @@ def load_news_items(
     db, items: list[dict[str, Any]], *, ai_tag_name: str = "AI", tag_type: str = "theme"
 ) -> dict[str, int]:
     """
-    回傳統計 dict：{"inserted": n, "skipped_existing": n, "skipped_invalid": n}。
+    回傳統計 dict：{"inserted": n, "skipped_existing": n, "skipped_invalid": n,
+    "inserted_news_ids": [news_id, ...]}。
     `skipped_invalid`：冇 title 或者冇 url 嘅殘缺 item(理論上唔應該出現，
     但外部來源格式隨時變，做多層保護好過成個 pipeline 中途死)。
+    `inserted_news_ids`：呢次 run 真係新插入嘅 news_id(唔包 skipped_existing)，
+    畀 caller(run_daily.py)知道邊幾條先啱 concept extraction，唔使掃成個 News
+    table，亦唔會撞返 skipped_existing 嗰啲舊聞重複做多次 LLM extraction。
     """
     inserted = 0
     skipped_existing = 0
     skipped_invalid = 0
+    inserted_news_ids: list[int] = []
 
     for item in items:
         title = (item.get("title") or "").strip()
@@ -54,7 +59,7 @@ def load_news_items(
         company_ids = item.get("company_ids") or []
         news_type = "company" if company_ids else "industry"
 
-        db.add_news(
+        news = db.add_news(
             title=title,
             published_at=item["published_at"],
             content=item.get("summary"),
@@ -66,5 +71,11 @@ def load_news_items(
             tag_type=tag_type,
         )
         inserted += 1
+        inserted_news_ids.append(news.news_id)
 
-    return {"inserted": inserted, "skipped_existing": skipped_existing, "skipped_invalid": skipped_invalid}
+    return {
+        "inserted": inserted,
+        "skipped_existing": skipped_existing,
+        "skipped_invalid": skipped_invalid,
+        "inserted_news_ids": inserted_news_ids,
+    }

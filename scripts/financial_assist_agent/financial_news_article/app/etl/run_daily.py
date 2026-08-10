@@ -9,7 +9,7 @@ from typing import Optional
 
 from app.database import get_session
 from app.manager.db_manager import DatabaseManager
-from app.etl.embed_company_facts import embed_article, embed_news
+from app.etl.embed_company_facts import embed_article, embed_company_facts, embed_news, embed_entity
 from app.etl.LLM_analyze import AI_analyze, _ANALYSIS_NEWS_SYSTEM_PROMPT, _ANALYSIS_COMPANY_SYSTEM_PROMPT,  _ANALYSIS_RISK_SYSTEM_PROMPT, _ANALYZE_LEGAL_PROCEEDINGS_PROMPT, _ANALYSIS_ARTICLE_SYSTEM_PROMPT
 from app.etl.fetch_company import fetch_company_profile_by_SEC, fetch_company_profile_by_yfinance
 from app.models import (
@@ -308,7 +308,7 @@ def analyze_and_save(
         return article
 
 
-def run() -> dict[str, int]:
+def daily_news_fetch() -> dict[str, int]:
     db = DatabaseManager()
     try:
         known_companies = [
@@ -339,6 +339,41 @@ def run() -> dict[str, int]:
     finally:
         db.dispose()
 
+def embedding_job() -> None:
+    """每日排程執行嘅 embedding job：幫公司 facts / news / article 補返漏低嘅 embedding。"""
+    logger.info("開始執行每日 embedding job...")
+    embed_company_facts()
+
+
+def run_process_news_for_concepts(news_ids: list[int], *, db: DatabaseManager) -> None:
+    """
+    每日排程執行嘅 concept extraction job：攞返呢次 daily_news_fetch() 新插入嘅新聞
+    (唔包 skipped_existing 嗰啲舊聞，唔會重複做多次 LLM extraction)，逐條抽
+    theme/relation 寫入 Mind Map，等 Concept Graph 可以跟住新聞每日累積。
+
+    單一條新聞 LLM 抽取失敗唔應該累個 batch 齊 fail，log 低就跳去下一條。
+    """
+    from app.etl.extract_concepts import process_news_for_concepts
+
+    logger.info("開始執行每日 concept extraction job，共 %d 條新聞...", len(news_ids))
+    for news_id in news_ids:
+        try:
+            process_news_for_concepts(db, news_id)
+        except Exception:
+            logger.exception("news_id=%s 嘅 concept extraction 失敗，跳過", news_id)
+
+
+
+
 
 if __name__ == "__main__":
-    run()
+    stats = daily_news_fetch()
+
+    db = DatabaseManager()
+    try:
+        run_process_news_for_concepts(stats["inserted_news_ids"], db=db)
+    finally:
+        db.dispose()
+
+    embedding_job()
+

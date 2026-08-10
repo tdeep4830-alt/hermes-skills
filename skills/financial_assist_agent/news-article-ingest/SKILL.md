@@ -1,11 +1,13 @@
 ---
-name: news-article-ingest-and-matching
-description: Ingest a piece of financial news or an analysis article into the database pipeline (LLM extraction, auto company creation, embedding), and run the periodic News-Company / News-Article matching job. Use when the user pastes raw news text or an analysis article — including in the Telegram group chat — and wants it added to the database, or asks to run/schedule matching.
+name: news-article-ingest
+description: Ingest a piece of financial news or an analysis article into the database pipeline (LLM extraction, auto company creation, embedding). Use when the user pastes raw news text or an analysis article — including in the Telegram group chat — and wants it added to the database. Not for running the periodic matching job or the daily auto-fetch job — see the `news-pipeline-scheduled-jobs` skill for those.
 ---
 
-# Stock News DB Pipeline
+# News / Article Ingestion
 
-操作 `financial_news_article` project 嘅新聞/文章 ingestion + matching pipeline。
+操作 `financial_news_article` project 嘅新聞/文章 ingestion pipeline，由用戶貼原文觸發。
+呢個 skill 淨係處理「用戶貼一段嘢入嚟」嘅情況——想跑 matching job 或者每日自動
+fetch job（背景/定時工作，唔使用戶貼嘢），用 `news-pipeline-scheduled-jobs` 呢個 skill。
 
 ## 執行方式
 
@@ -57,25 +59,6 @@ curl -s -X POST http://127.0.0.1:5000/run/ingest-article \
 同 News pipeline，額外存 `thesis`/`conclusion`（`analysis_article` table），
 用 `ArticleCompanyLink`/`ArticleTagLink`，多 embed 一次 `thesis`。
 
-## Run Matching
-
-**唔好**每次 ingest 完即刻跑，應該等一批新聞/文章入晒 DB 先一齊跑：
-
-```bash
-curl -s -X POST http://127.0.0.1:5000/run/run-matching
-```
-
-跑：
-- `match_news_to_companies()` —— Layer 2（tag/category）+ Layer 3（embedding）
-- `match_news_to_articles()` —— shared_company / shared_tag / embedding 三層
-
-兩個 matcher 都係 idempotent，隨時可以重跑。
-
-**幾時跑**：
-- 用戶明確講「跑吓 matching」
-- 用戶一次過貼咗好幾則新聞/文章後問相關性
-- 生產環境用 cron 定時觸發（建議每 15-60 分鐘）
-
 ## 確認 API 正常運行
 
 ```bash
@@ -90,4 +73,6 @@ curl -s http://127.0.0.1:5000/health
   用戶一次貼十幾則嘢想全部 ingest，先確認再執行。
 - **環境變數**：container 入面要有 `DATABASE_URL`、`OPENAI_API_KEY`（DeepSeek key）、
   `EMBEDDING_API_KEY`（OpenAI key）。
-- **Matching 時機**：ingestion 同 matching 分開 cadence，唔好 ingest 一次就即刻跑。
+- **Matching 時機**：ingest 完**唔好即刻**跑 matching，應該等一批新聞/文章入晒
+  DB 先一齊跑——跑 matching job 或者設定期背景工作，睇 `news-pipeline-scheduled-jobs`
+  呢個 skill。
