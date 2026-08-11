@@ -71,3 +71,16 @@ jobs:
             git pull origin main
             python3 scripts/deploy_skills.py
             echo "✅ Deploy complete"
+
+      - name: Write .env to VPS
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            cat > /root/my-hermes-skills/scripts/financial_assist_agent/financial_news_article/.env << 'EOF'
+            DATABASE_URL=${{ secrets.DATABASE_URL }}
+            OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
+            EMBEDDING_API_KEY=${{ secrets.EMBEDDING_API_KEY }}
+            EOF

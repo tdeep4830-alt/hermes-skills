@@ -92,16 +92,24 @@ def deploy_scripts():
         docker_cp(agent_dir, CONTAINER_SCRIPTS_DEST)
         print(f"  ✅ Agent: {agent_dir.name}")
 
+def deploy_env():
+    env_file = SCRIPTS_SRC / "financial_assist_agent" / "financial_news_article" / ".env"
+    if env_file.exists():
+        docker_cp(env_file, f"{CONTAINER_SCRIPTS_DEST}/financial_assist_agent/financial_news_article/.env")
+        print("✅ .env deployed to container")
+
 
 # ── Main ──────────────────────────────────────────────────
 def main():
     print("🚀 Starting deploy...")
     print(f"   Skills  → host: {SKILLS_DEST}")
     print(f"   Scripts → container: {CONTAINER}:{CONTAINER_SCRIPTS_DEST}")
+    print(f"   .env    → container: {CONTAINER}:{CONTAINER_SCRIPTS_DEST}/financial_assist_agent/financial_news_article/.env")
 
     install_requirements()
     deploy_skills()
     deploy_scripts()
+    deploy_env()
 
     print("\n🎉 Deploy complete!")
 
