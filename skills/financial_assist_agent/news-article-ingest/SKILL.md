@@ -11,7 +11,7 @@ fetch job（背景/定時工作，唔使用戶貼嘢），用 `news-pipeline-sch
 
 ## 執行方式
 
-所有指令透過 Hermes API Bridge（`http://127.0.0.1:5000`）執行，
+所有指令透過 Hermes API Bridge（`http://172.16.1.1:5000`）執行，
 由 host 機負責 `docker exec` 入 `hermes-agent-c05p-hermes-agent-1` container。
 Agent 只需用 `curl` 呼叫即可，唔需要直接執行 python。
 
@@ -35,7 +35,7 @@ News 定 Article pipeline，然後直接 call API，唔使再等用戶確認。
 ## Ingest News
 
 ```bash
-curl -s -X POST http://127.0.0.1:5000/run/ingest-news \
+curl -s -X POST http://172.16.1.1:5000/run/ingest-news \
   -H "Content-Type: application/json" \
   -d '{"text": "新聞原文貼呢度", "source": "Reuters"}'
 ```
@@ -51,7 +51,7 @@ curl -s -X POST http://127.0.0.1:5000/run/ingest-news \
 ## Ingest Article
 
 ```bash
-curl -s -X POST http://127.0.0.1:5000/run/ingest-article \
+curl -s -X POST http://172.16.1.1:5000/run/ingest-article \
   -H "Content-Type: application/json" \
   -d '{"text": "文章原文貼呢度", "source": "Seeking Alpha"}'
 ```
@@ -62,7 +62,7 @@ curl -s -X POST http://127.0.0.1:5000/run/ingest-article \
 ## 確認 API 正常運行
 
 ```bash
-curl -s http://127.0.0.1:5000/health
+curl -s http://172.16.1.1:5000/health
 ```
 
 返回 `{"status": "ok"}` 即係正常。
