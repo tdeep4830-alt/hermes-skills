@@ -11,9 +11,9 @@ fetch job（背景/定時工作，唔使用戶貼嘢），用 `news-pipeline-sch
 
 ## 執行方式
 
-所有指令透過 Hermes API Bridge（`http://172.16.1.1:5000`）執行，
-由 host 機負責 `docker exec` 入 `hermes-agent-c05p-hermes-agent-1` container。
-Agent 只需用 `curl` 呼叫即可，唔需要直接執行 python。
+所有指令透過 Hermes API Bridge（`http://172.16.1.1:5000`）執行。
+**Agent 只需用 `curl` 呼叫 API，唔需要、亦唔應該直接行 `docker` 或 `python` 指令。**
+
 
 ## TG Group trigger
 

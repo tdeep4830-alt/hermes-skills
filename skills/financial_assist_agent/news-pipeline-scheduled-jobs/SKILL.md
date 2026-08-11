@@ -11,14 +11,14 @@ description: Run or schedule the two background jobs for the financial news pipe
 
 ## 執行方式
 
-所有指令透過 Hermes API Bridge（`http://127.0.0.1:5000`）執行，
-由 host 機負責 `docker exec` 入 `hermes-agent-c05p-hermes-agent-1` container。
-Agent 只需用 `curl` 呼叫即可，唔需要直接執行 python。
+所有指令透過 Hermes API Bridge（`http://172.16.1.1:5000`）執行。
+**Agent 只需用 `curl` 呼叫 API，唔需要、亦唔應該直接行 `docker` 或 `python` 指令。**
+
 
 ## Run Matching
 
 ```bash
-curl -s -X POST http://127.0.0.1:5000/run/run-matching
+curl -s -X POST http://172.16.1.1:5000/run/run-matching
 ```
 
 跑：
@@ -37,13 +37,18 @@ curl -s -X POST http://127.0.0.1:5000/run/run-matching
 唔靠用戶餵料，自己去 RSS（TechCrunch/The Verge/Ars Technica/VentureBeat/MIT Tech
 Review）+ Hacker News + Finnhub 攞返最新 AI/Tech 新聞，一路做到寫入 Mind Map。
 
-單一個 entrypoint，一個 command 走晒成條鏈（fetch → clean/dedup → load →
+單一個 entrypoint，一個 API call 走晒成條鏈（fetch → clean/dedup → load →
 concept extraction → embedding）：
 
 ```bash
-docker exec hermes-agent-c05p-hermes-agent-1 sh -c \
-  "cd /opt/hermes/scripts/financial_assist_agent/financial_news_article && python -m app.etl.run_daily"
+curl -s -X POST http://172.16.1.1:5000/run/daily-fetch
 ```
+
+> ⚠️ 呢個 skill 假設 Flask API Bridge 已經有 `/run/daily-fetch` 呢條 route，
+> 內部對應執行 `python -m app.etl.run_daily`（同 `/run/run-matching` 果類 route
+> 做法一樣）。Bridge server 唔喺呢個 repo 入面（喺 host 機獨立跑），如果呢條
+> route 仲未加，要先喺 bridge server 度加返（照抄 `/run/run-matching` 嗰個
+> handler，改行 `python -m app.etl.run_daily` 就得），先可以用呢個 skill。
 
 背後做（`app/etl/run_daily.py` 嘅 `if __name__ == "__main__":`）：
 1. `daily_news_fetch()` —— fetch 三類來源 → relevance filter + dedup（url exact
@@ -55,10 +60,11 @@ docker exec hermes-agent-c05p-hermes-agent-1 sh -c \
 
 ## 建議 Cron 排程
 
-生產環境建議用 host 機 crontab 觸發（唔係入 container 裝 cron），例如每日一次：
+生產環境建議用 host 機 crontab 觸發，一樣經 Flask API（唔好喺 cron 度直接
+`docker exec`，同 Agent 用嗰條路徑保持一致），例如每日一次：
 
 ```cron
-0 6 * * * docker exec hermes-agent-c05p-hermes-agent-1 sh -c "cd /opt/hermes/scripts/financial_assist_agent/financial_news_article && python -m app.etl.run_daily" >> /var/log/hermes-daily-fetch.log 2>&1
+0 6 * * * curl -s -X POST http://172.16.1.1:5000/run/daily-fetch >> /var/log/hermes-daily-fetch.log 2>&1
 ```
 
 **點解淨係一日一次（唔似 matching 嗰邊建議 15-60 分鐘一次）**：
@@ -71,7 +77,7 @@ docker exec hermes-agent-c05p-hermes-agent-1 sh -c \
 ## 確認 API 正常運行
 
 ```bash
-curl -s http://127.0.0.1:5000/health
+curl -s http://172.16.1.1:5000/health
 ```
 
 返回 `{"status": "ok"}` 即係正常。
