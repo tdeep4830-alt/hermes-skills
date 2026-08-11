@@ -37,7 +37,7 @@ def docker_exec(cmd: str):
 
 # ── Install Requirements ──────────────────────────────────
 def install_requirements():
-    requirements_file = SCRIPTS_SRC / "requirements.txt"
+    requirements_file =  Path(__file__).parent.parent / "requirements.txt"
     if requirements_file.exists():
         print(f"📦 Installing requirements...")
         docker_cp(requirements_file, "/tmp/requirements.txt")
