@@ -4,7 +4,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # .env 實際放喺 repo root(financial_news_article/ 嘅太爺目錄)，用絕對路徑讀
 # 就唔使理呼叫方個 cwd 係邊(直接跑 script、喺 tests/ 入面跑 pytest 等等都得)。
-_REPO_ROOT_ENV = Path(__file__).resolve().parents[4] / ".env"
+_REPO_ROOT_ENV = Path("/opt/hermes/scripts/financial_assist_agent/financial_news_article/.env")
 
 
 class Settings(BaseSettings):
