@@ -17,7 +17,6 @@ import sys
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Optional, TypedDict
-
 from dotenv import load_dotenv
 
 # financial_news_article/ 呢層本身唔係一個裝咗嘅 package,`app.*` 一定要用呢層做
@@ -36,6 +35,7 @@ from app.etl.extract_concepts import process_news_for_concepts, process_article_
 from app.etl.run_daily import analyze_and_save  # noqa: E402
 from app.etl.run_matching import run_matching as _run_matching  # noqa: E402
 from app.manager.db_manager import DatabaseManager  # noqa: E402
+from app.etl.fetch_news import fetch_all, fetch_content_from_url, CONTENT_CLASS_BY_DOMAIN  # noqa: E402
 
 
 db = DatabaseManager()
@@ -48,56 +48,41 @@ class FavorableNewsItem(TypedDict):
     relevance: float
 
 
-def ingest_news(text: str, *, source: Optional[str] = None, url: Optional[str] = None) -> int:
+def ingest_news(item: dict[str], *, source: Optional[str] = None, url: Optional[str] = None) -> int:
     """
     分析一則新聞原文(事實/事件報導)並存入 Supabase：LLM 抽 title/description/sentiment/
     tickers/tags -> 冇嘅公司自動用 yfinance + SEC 10-K 建檔 -> 寫 news + NewsCompanyLink/
     NewsTagLink -> 即時 embed description。
     回傳 news_id。
     """
+    text = fetch_content_from_url(url, content_class=CONTENT_CLASS_BY_DOMAIN.get(source, ""))
+    item["text"] = text
     news = analyze_and_save(
-        "news", text, source=source, url=url, published_at=datetime.now(timezone.utc)
+        "news", item.get("text"), source=source, url=url, published_at=item.get("published_at")
     )
     return news.news_id
 
 
-def ingest_article(text: str, *, source: Optional[str] = None, url: Optional[str] = None) -> int:
+def ingest_article(item: dict[str], *, source: Optional[str] = None, url: Optional[str] = None) -> int:
     """
     分析一篇分析/觀點文章(有 thesis + conclusion,例如 Seeking Alpha 風格長文)並存入
     Supabase。步驟同 ingest_news,額外存埋 thesis/conclusion,並多 embed 一次 thesis。
     回傳 news_id(article 底層都係一行 news)。
     """
+    text = fetch_content_from_url(url, content_class=CONTENT_CLASS_BY_DOMAIN.get(source, ""))
+    item["text"] = text
     article = analyze_and_save(
-        "article", text, source=source, url=url, published_at=datetime.now(timezone.utc)
+        "article", item.get("text"), source=source, url=url, published_at=item.get("published_at")
     )
     return article.news_id
 
 
-def _coerce_date(value: Optional[date | datetime | str]) -> date:
-    """將 `date` 參數統一轉做 `datetime.date`,等呼叫方唔使理傳嘅係 str/datetime/date。"""
-    if value is None:
-        return datetime.now(timezone.utc).date()
-    if isinstance(value, datetime):
-        return value.date()
-    if isinstance(value, date):
-        return value
-    if isinstance(value, str):
-        return date.fromisoformat(value)
-    raise TypeError(f"date 要係 None/date/datetime/ISO 格式 str,而唔係 {type(value).__name__}")
 
-
-def run_matching(date: Optional[date | datetime | str] = None) -> None:
-    """
-    對 DB 入面全部新聞跑一次 News-Company(tag 規則 + embedding 語義比對) /
-    News-Article matching。Idempotent,隨時可以重跑,唔會產生重複 link。
-    夾埋一批新聞/文章 ingest 完之後先跑一次,唔好逐次 ingest 就即刻跑。
-
-    `date`: 淨係處理呢日或之後嘅新聞,冇傳就預設今日(UTC)。接受 date/datetime/
-    ISO 格式(YYYY-MM-DD) str 三種格式。
-    """
-
-    resolved_date = _coerce_date(date)
-    _run_matching(resolved_date)
+def run_matching() -> None:
+    """對所有新聞跑一次 Layer 2/3 matching。兩個 matcher 都係 idempotent（淨係補未覆蓋嘅
+    match），重複執行唔會產生重複 row，所以呢度淨係簡單咁攞晒全部 news_id 嚟跑,
+    唔使額外追蹤邊啲已經 match 過。"""
+    _run_matching()
 
 
 def new_extract_concepts(news_id: int) -> dict[str, int]:
@@ -127,3 +112,19 @@ def article_extract_concepts(article_id: int) -> dict[str, int]:
     "skipped_relations"}。
     """
     return process_article_for_concepts(db, article_id)
+
+def fetch_news() -> list[dict[str, str]]:
+    """
+    從 Finnhub/其他 source 攞新聞,存入 Supabase,並做 embedding。
+    回傳一個 list,每個 item 係 {"news_id", "title", "published_at", "url", "relevance"}。
+    """
+    return fetch_all()
+
+if __name__ == "__main__":
+    # 本地測試用,唔好喺 production cron 用,因為會攞晒所有新聞去跑 matching,太慢。
+    items = fetch_news()
+    for item in items:
+        print
+        news_content = fetch_content_from_url(item["url"], content_class=CONTENT_CLASS_BY_DOMAIN.get(item.get("source", ""), ""))
+        print(f"攞到新聞正文，長度 {len(news_content)} 字元: {item['url']}，由 {item.get('source', 'unknown source')} 發佈")
+        

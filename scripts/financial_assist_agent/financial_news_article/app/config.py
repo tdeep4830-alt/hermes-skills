@@ -2,9 +2,11 @@ from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# .env 實際放喺 repo root(financial_news_article/ 嘅太爺目錄)，用絕對路徑讀
-# 就唔使理呼叫方個 cwd 係邊(直接跑 script、喺 tests/ 入面跑 pytest 等等都得)。
-_REPO_ROOT_ENV = Path("/opt/hermes/scripts/financial_assist_agent/financial_news_article/.env")
+# .env 實際放喺 repo root(financial_news_article/ 嘅太爺目錄)，用相對 __file__
+# 動態計返條路就唔使理呼叫方個 cwd 係邊(直接跑 script、喺 tests/ 入面跑 pytest
+# 都得)，亦唔使理成個 project 而家部署喺邊——local 定係 VPS container(
+# /opt/hermes/...)都自動啱，唔好改返做 hardcoded absolute path(local 冧晒)。
+_REPO_ROOT_ENV = Path(__file__).resolve().parents[4] / ".env"
 
 
 class Settings(BaseSettings):

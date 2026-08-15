@@ -14,6 +14,28 @@ if TYPE_CHECKING:
 
 risk_type_enum = ("financial", "operational", "strategic", "compliance", "reputational", "market", "other")
 
+# Product.category 嘅固定清單(唔係 DB-level enum，淨係 app 層驗證)——刻意收窄做
+# controlled vocabulary，等 TagCategoryRule(target_field="product_category")做
+# Layer 2 tag/category 規則配對嗰陣，唔會因為 LLM 自由發揮出「AI Chip」/「AI晶片」
+# 呢類意思一樣但字面唔同嘅 category，match 唔中。範圍對準呢個 pipeline 專注嘅
+# AI/Tech(同 clean_news.py 嘅 AI_TECH_KEYWORDS 對齊)。
+product_category_values = (
+    "GPU/AI Chip",
+    "Semiconductor/Foundry",
+    "Memory/Storage",
+    "Cloud/Data Center Infrastructure",
+    "Networking Hardware",
+    "Consumer Hardware",
+    "Generative AI/LLM",
+    "AI Agent/Automation Software",
+    "Enterprise Software/SaaS",
+    "Consumer Software/Platform",
+    "Cybersecurity",
+    "Robotics",
+    "Fintech/Payments",
+    "Other",
+)
+
 
 class Sector(Base):
     """行業分類（可以做層級：sector -> sub-sector）"""
@@ -108,6 +130,9 @@ class Company(Base, TimestampMixin):
         back_populates="company", cascade="all, delete-orphan"
     )
     article_links: Mapped[list["ArticleCompanyLink"]] = relationship(
+        back_populates="company", cascade="all, delete-orphan"
+    )
+    price_bars: Mapped[list["StockPrice"]] = relationship(
         back_populates="company", cascade="all, delete-orphan"
     )
 

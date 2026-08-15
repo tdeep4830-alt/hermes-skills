@@ -26,7 +26,6 @@ from openai import OpenAI
 from dotenv import load_dotenv
 import os
 
-from app.config import settings
 from app.database import get_session
 from app.manager.db_manager import DatabaseManager
 from app.models import (
@@ -128,7 +127,7 @@ def embed_entity(
 ) -> str:
     """
     幫單一個 entity 做 embedding（有就更新，冇就新增），用返 batch job 嗰套 content_hash dedup 邏輯。
-    俾 embed_company_facts()（batch）同 embed_news()/embed_article()（即時，新聞一入 DB 就叫）共用。
+    俾 embed_all_facts()（batch）同 embed_news()/embed_article()（即時，新聞一入 DB 就叫）共用。
     回傳 "embedded" / "reused" / "skipped" 講低發生咗咩事，方便 caller 記 log。
     """
     content_hash = _content_hash(content_text)
@@ -184,11 +183,18 @@ def embed_article(article_id: int, *, db: Optional[DatabaseManager] = None) -> O
     return outcome
 
 
-def embed_company_facts() -> None:
+def embed_all_facts() -> None:
     db = DatabaseManager()
     counts = {"embedded": 0, "reused": 0, "skipped": 0}
 
+    # 一次過攞晒現存 (entity_type, entity_id) -> content_hash，等下面逐個 entity
+    # 淨係喺記憶體度比對就知道有冇變過，唔使冧個都開一次 DB round-trip 先知。
+    existing_hashes = db.get_all_fact_embedding_hashes()
+
     for entity_type, entity_id, company_id, content_text in _iter_source_rows():
+        if existing_hashes.get((entity_type, entity_id)) == _content_hash(content_text):
+            counts["skipped"] += 1
+            continue
         outcome = embed_entity(db, entity_type, entity_id, company_id, content_text)
         counts[outcome] += 1
 
@@ -210,7 +216,7 @@ def embed_texts(
     if not texts:
         return []
     client = client or _embedding_client
-    model = model or settings.EMBEDDING_MODEL
+    model = model or EMBEDDING_MODEL
 
     response = client.embeddings.create(model=model, input=texts)
     vectors = [item.embedding for item in response.data]
@@ -227,4 +233,4 @@ def embed_texts(
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    embed_company_facts()
+    embed_all_facts()

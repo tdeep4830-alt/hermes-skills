@@ -8,6 +8,26 @@ import time
 from pathlib import Path
 from bs4 import BeautifulSoup
 import re
+from app.models import (
+    Company,
+    CompanyProfile,
+    Competitor,
+    GovernmentalProgramAndRegulation,
+    Industry,
+    LegalAndRegulatoryIssues,
+    ManufacturingProcess,
+    Product,
+    Risk,
+    Sector,
+    Service,
+    SupplyChainAndLogistics,
+    Technology,
+    News,
+
+)
+from app.database import get_session
+from app.etl.LLM_analyze import AI_analyze, _ANALYSIS_COMPANY_SYSTEM_PROMPT,  _ANALYSIS_RISK_SYSTEM_PROMPT, _ANALYZE_LEGAL_PROCEEDINGS_PROMPT
+from app.models.company import risk_type_enum, product_category_values
 
 logger = logging.getLogger(__name__)
 
@@ -282,4 +302,192 @@ def fetch_company_profile_by_yfinance(ticker: str):
         }
 
 
+
+def _get_or_create_sector(session, sector_name: str | None) -> int | None:
+    if not sector_name:
+        return None
+    sector = session.query(Sector).filter_by(sector_name=sector_name).first()
+    if sector is None:
+        sector = Sector(sector_name=sector_name)
+        session.add(sector)
+        session.flush()
+    return sector.sector_id
+
+
+def _get_or_create_industry(session, industry_name: str | None, sector_id: int | None) -> int | None:
+    if not industry_name:
+        return None
+    industry = session.query(Industry).filter_by(industry_name=industry_name).first()
+    if industry is None:
+        industry = Industry(industry_name=industry_name, sector_id=sector_id)
+        session.add(industry)
+        session.flush()
+    return industry.industry_id
+
+
+def _as_list(value) -> list:
+    """AI_analyze 對於「一個或多個 object」嘅 prompt，有時會淨係返一個 dict 冇包 array。"""
+    if not value:
+        return []
+    return value if isinstance(value, list) else [value]
+
+
+def company_search(ticker: str) -> None:
+    """攞返公司嘅基本資料同業務背景。"""
+    background = []
+    background.append(fetch_company_profile_by_yfinance(ticker))
+    info_from_SEC = fetch_company_profile_by_SEC(ticker)
+    if not info_from_SEC:
+        logger.warning("喺SEC搵唔到 %s 嘅公司資料", ticker)
+    else:
+        company_search_result_from_LLM = AI_analyze(info_from_SEC["business_summary"], model="deepseek-v4-pro", prompt=_ANALYSIS_COMPANY_SYSTEM_PROMPT)
+        risk_search_result_from_LLM = AI_analyze(info_from_SEC["risk_factors"], model="deepseek-v4-pro", prompt=_ANALYSIS_RISK_SYSTEM_PROMPT)
+        legal_proceedings_result_from_LLM = AI_analyze(info_from_SEC["legal_proceedings"], model="deepseek-v4-pro", prompt=_ANALYZE_LEGAL_PROCEEDINGS_PROMPT)
+        background.append({
+            "business_summary": company_search_result_from_LLM,
+            "risk_factors": risk_search_result_from_LLM,
+            "legal_proceedings": legal_proceedings_result_from_LLM,
+        })
+
+    return background
+
+def save_company(ticker: str) -> None:
+    """攞返公司嘅基本資料同業務背景，然後存入 DB。"""
+    ticker = ticker.upper()
+    with get_session() as session:
+        company = session.query(Company).filter_by(ticker=ticker).first()
+        if company is not None:
+            logger.info("公司 %s 已經喺 DB 入面，唔需要再存", ticker)
+            return
+
+        background = company_search(ticker)
+        yf_profile = background[0] if background else None
+        if not yf_profile:
+            logger.warning("冇搵到 %s 嘅公司資料，唔會存入 DB", ticker)
+            return
+
+        # company_search 淨係喺搵到 SEC 10-K 先會 append 埋 LLM 分析結果，
+        # 搵唔到就得返 yfinance 嗰個 profile。
+        sec_analysis = background[1] if len(background) > 1 else {}
+        company_details = sec_analysis.get("business_summary") or {}
+        risk_items = _as_list(sec_analysis.get("risk_factors"))
+        legal_items = _as_list(sec_analysis.get("legal_proceedings"))
+
+        sector_id = _get_or_create_sector(session, yf_profile.get("sector"))
+        industry_id = _get_or_create_industry(session, yf_profile.get("industry"), sector_id)
+
+        new_company = Company(
+            ticker=ticker,
+            name_en=yf_profile.get("name") or ticker,
+            sector_id=sector_id,
+            industry_id=industry_id,
+        )
+        session.add(new_company)
+        session.flush()  # 攞返 new_company.company_id，畀底下嘅 child row 用
+
+        business_model = company_details.get("business_model")
+        description = yf_profile.get("business_summary")
+        if business_model or description:
+            session.add(
+                CompanyProfile(
+                    company_id=new_company.company_id,
+                    business_model=business_model,
+                    description=description,
+                    is_current=True,
+                )
+            )
+
+        # main_products 而家係 {name, category, description} object 嘅 array(唔再係
+        # 純文字 array)——category 一定要對得住 product_category_values 呢個固定
+        # 清單先寫得入，等 TagCategoryRule(target_field="product_category") Layer 2
+        # 規則配對用得到；LLM 亂咁作嘅值(或者冇填)一律 fallback 做 "Other"，唔好
+        # 因為個值唔喺清單度就成粒 row 唔插。
+        for product in _as_list(company_details.get("main_products")):
+            product_name = (product.get("name") or "")[:255]
+            if not product_name:
+                continue
+            category = product.get("category")
+            if category not in product_category_values:
+                category = "Other"
+            session.add(
+                Product(
+                    company_id=new_company.company_id,
+                    product_name=product_name,
+                    category=category,
+                    description=product.get("description"),
+                )
+            )
+
+        for technology_text in _as_list(company_details.get("technology")):
+            session.add(
+                Technology(
+                    company_id=new_company.company_id,
+                    technology_name=technology_text[:255],
+                    description=technology_text,
+                )
+            )
+
+        for service_text in _as_list(company_details.get("main_services")):
+            session.add(
+                Service(company_id=new_company.company_id, service_name=service_text[:255], description=service_text)
+            )
+
+        for program_text in _as_list(company_details.get("governmental_programs_and_regulations")):
+            session.add(
+                GovernmentalProgramAndRegulation(
+                    company_id=new_company.company_id,
+                    program_name=program_text[:255],
+                    description=program_text,
+                )
+            )
+
+        for process_text in _as_list(company_details.get("Manufucturing_and_Supply_Chain")):
+            session.add(
+                ManufacturingProcess(
+                    company_id=new_company.company_id,
+                    process_name=process_text[:255],
+                    description=process_text,
+                )
+            )
+
+        for supply_chain_text in _as_list(company_details.get("supply_chain")):
+            session.add(
+                SupplyChainAndLogistics(
+                    company_id=new_company.company_id,
+                    supply_chain_name=supply_chain_text[:255],
+                    description=supply_chain_text,
+                )
+            )
+
+        for competitor_text in _as_list(company_details.get("competitors")):
+            session.add(
+                Competitor(
+                    company_id=new_company.company_id,
+                    competitor_name=competitor_text[:255],
+                    description=competitor_text,
+                )
+            )
+
+        for risk in risk_items:
+            risk_type = risk.get("risk_type")
+            session.add(
+                Risk(
+                    company_id=new_company.company_id,
+                    risk_type=risk_type if risk_type in risk_type_enum else "other",
+                    description=risk.get("risk_description"),
+                )
+            )
+
+        for issue in legal_items:
+            issue_type = issue.get("legal_proceeding_type") or "other"
+            session.add(
+                LegalAndRegulatoryIssues(
+                    company_id=new_company.company_id,
+                    issue_title=issue_type.title(),
+                    description=issue.get("legal_proceeding_description"),
+                )
+            )
+
+        session.commit()
+        logger.info("已經將公司 %s 存入 DB", ticker)
 

@@ -13,6 +13,7 @@ from openai import OpenAI
 from dotenv import load_dotenv
 import os
 from app.models import News
+from app.models.company import product_category_values
 import logging
 from dataclasses import dataclass, field
 
@@ -25,7 +26,7 @@ if TYPE_CHECKING:
     from app.manager.db_manager import DatabaseManager
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"), base_url="https://api.deepseek.com")
-model = "deepseek-v4-pro"
+model = "deepseek-v4-flash"
 
 RELATION_TYPES: list[str] = [
     "benefits",            # 令 to 受惠
@@ -56,19 +57,27 @@ _ANALYSIS_NEWS_SYSTEM_PROMPT = """你係財經新聞分析員。閱讀用戶提�
   "tags": string[]          // 相關主題 tag，例如 "AI"、"加息"，冇就返 []
 }"""
 
-_ANALYSIS_COMPANY_SYSTEM_PROMPT = """你係財經新聞分析員。閱讀用戶提供嘅公司資料，淨係回覆一個 JSON object，
+_PRODUCT_CATEGORY_OPTIONS = ", ".join(f'"{c}"' for c in product_category_values)
+
+_ANALYSIS_COMPANY_SYSTEM_PROMPT = f"""你係財經新聞分析員。閱讀用戶提供嘅公司資料，淨係回覆一個 JSON object，
 唔好加任何解釋文字，唔好用 markdown code fence。JSON schema:
 
-{
+{{
   "business_model": string,          // 公司業務模式嘅簡短描述
-  "main_products": string[],          // 公司主要產品/服務嘅簡短描述
+  "main_products": [                  // 公司主要產品/服務
+    {{
+      "name": string,                 // 產品名，簡短(建議<20字)
+      "category": string,             // 一定要係以下其中一個: {_PRODUCT_CATEGORY_OPTIONS}；唔啱就揀 "Other"
+      "description": string           // 呢個產品嘅簡短描述
+    }}
+  ],
   "technology": string[],              // 公司主要技術/專利嘅簡短描述
   "main_services": string[],              // 公司主要服務/平台嘅簡短描述
   "governmental_programs_and_regulations": string[],  // 公司受惠嘅政府計劃/法規嘅簡短描述
   "Manufucturing_and_Supply_Chain": string[],  // 公司製造/供應鏈嘅簡短描述
   "supply_chain": string[],  // 公司供應鏈嘅簡短描述
   "competitors": string[]  // 公司主要競爭對手嘅簡短描述
-}"""
+}}"""
 
 _ANALYSIS_RISK_SYSTEM_PROMPT = """你係財經新聞分析員。閱讀用戶提供嘅公司資料原文，淨係回覆一個 JSON array，
 入面裝住一個或多個代表風險因素嘅 JSON object（即使得一個都要用 array 包住），
@@ -102,7 +111,7 @@ _ANALYSIS_ARTICLE_SYSTEM_PROMPT = """你係財經新聞分析員。閱讀用戶�
 EXTRACTION_TOOL_SCHEMA: dict[str, Any] = {
     "name": "record_extraction",
     "description": "記錄由文章入面抽取到嘅市場主題，同埋主題之間/主題同公司之間嘅因果或影響關係。",
-    "input_schema": {
+    "parameters": {
         "type": "object",
         "properties": {
             "themes": {
@@ -143,7 +152,7 @@ EXTRACTION_TOOL_SCHEMA: dict[str, Any] = {
 }
 
 
-def AI_analyze(text: str, *, model: str = "deepseek-v4-pro", prompt) -> dict:
+def AI_analyze(text: str, *, model: str = "deepseek-v4-flash", prompt) -> dict:
     """叫 Claude 分析新聞原文，回傳結構化結果 。"""
     response = client.chat.completions.create(
         model=model,
@@ -153,7 +162,7 @@ def AI_analyze(text: str, *, model: str = "deepseek-v4-pro", prompt) -> dict:
             {"role": "user", "content": text},
         ],
         stream=False,
-        reasoning_effort="high",
+        reasoning_effort="low",
     )
     choice = response.choices[0]
     raw = (choice.message.content or "").strip()
@@ -165,6 +174,30 @@ def AI_analyze(text: str, *, model: str = "deepseek-v4-pro", prompt) -> dict:
     raw = raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
     return json.loads(raw)
 
+def weekly_digest_llm_fn(prompt: str, *, model: Optional[str] = None) -> str:
+    """
+    呢度用普通文字生成(唔強制 tool_choice),因為輸出係俾人讀嘅摘要文字,唔係結構化資料。
+    """
+
+    
+    model = model or "deepseek-v4-flash"
+
+    response = client.chat.completions.create(
+        model=model,
+        max_tokens=4096,
+        messages=[{"role": "user", "content": prompt}],
+        reasoning_effort="low",
+    )
+
+    message = response.choices[0].message
+    content = (message.content or "").strip()
+    if not content:
+        content = (getattr(message, "reasoning_content", None) or "").strip()
+        logger.warning(
+            "weekly_digest_llm_fn: message.content 係空,改用 reasoning_content (finish_reason=%r)",
+            response.choices[0].finish_reason,
+        )
+    return content
 
 @dataclass
 class ExtractedTheme:
@@ -327,16 +360,34 @@ def extract_concepts_and_relations(
       article_title, article_content, known_companies, grounding_themes, max_relations=max_relations
   )
 
-  response = client.messages.create(
+  # client 係 OpenAI SDK 指去 DeepSeek(base_url="https://api.deepseek.com")，唔係
+  # Anthropic client——要用 chat.completions.create() + OpenAI 個 tool-calling
+  # 格式(function wrapper)，唔係 Anthropic 嗰套 messages.create()/input_schema。
+  response = client.chat.completions.create(
       model=model,
       max_tokens=2048,
-      tools=[EXTRACTION_TOOL_SCHEMA],
-      tool_choice={"type": "tool", "name": "record_extraction"},
+      tools=[{"type": "function", "function": EXTRACTION_TOOL_SCHEMA}],
+      tool_choice="auto",
       messages=[{"role": "user", "content": prompt}],
   )
 
-  tool_use_block = next(b for b in response.content if b.type == "tool_use")
-  return _parse_and_validate(tool_use_block.input, known_companies=known_companies)
+  message = response.choices[0].message
+  if not message.tool_calls:
+      # tool_choice="auto" 冧強制一定要 call 個 tool——DeepSeek 個模型間中會
+      # 揀直接用文字回覆(或者判斷冧嘢好抽)，唔 call `record_extraction`。
+      # 呢種情況當「呢篇文章/新聞冧抽到任何 theme/relation」處理，返回空
+      # ExtractionResult，等 caller(_process_text_for_concepts)嘅
+      # 「冧themes冧relations就skip」邏輯自然接住，唔好累個 batch job 死。
+      logger.warning(
+          "extract_concepts_and_relations: LLM 冇 call tool，當冇嘢可抽。finish_reason=%r, content=%r",
+          response.choices[0].finish_reason,
+          message.content,
+      )
+      return ExtractionResult()
+
+  tool_call = message.tool_calls[0]
+  arguments = json.loads(tool_call.function.arguments)
+  return _parse_and_validate(arguments, known_companies=known_companies)
 
 
 

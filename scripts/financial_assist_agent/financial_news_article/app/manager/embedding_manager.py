@@ -11,6 +11,21 @@ from app.models import CompanyFactEmbedding
 
 
 class EmbeddingManagerMixin:
+    def get_all_fact_embedding_hashes(self) -> dict[tuple[str, int], str]:
+        """一次過攞晒現存所有 embedding 嘅 (entity_type, entity_id) -> content_hash。
+
+        俾 embed_all_facts() 呢類 batch job 用嚟做「呢個 entity 有冇變過」嘅
+        pre-check——一次 SQL 查晒晒(淨係 3 條窄欄位，唔夾 embedding vector)，
+        喺 Python 層面同新計嘅 content_hash 比對，唔使 loop 入面逐個 entity 都
+        開一次 get_fact_embedding() 嘅 DB round-trip。"""
+        with self.session_scope() as s:
+            stmt = select(
+                CompanyFactEmbedding.entity_type,
+                CompanyFactEmbedding.entity_id,
+                CompanyFactEmbedding.content_hash,
+            )
+            return {(entity_type, entity_id): content_hash for entity_type, entity_id, content_hash in s.execute(stmt)}
+
     def get_fact_embedding(self, entity_type: str, entity_id: int) -> Optional[CompanyFactEmbedding]:
         """攞返呢個 entity 現有嘅 embedding row（有嘅話），用嚟同新嘅 content_hash 比對，
         判斷 description 有冇變過。"""

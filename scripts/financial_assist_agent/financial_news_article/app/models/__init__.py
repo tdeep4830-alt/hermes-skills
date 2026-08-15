@@ -30,6 +30,7 @@ from app.models.news_and_article import (
 )
 from app.models.embedding import CompanyFactEmbedding
 from app.models.concept import Concept, ConceptRelation, ConceptRelationEvidence
+from app.models.price import StockPrice
 
 __all__ = [
     "Base",
@@ -59,5 +60,6 @@ __all__ = [
     "CompanyFactEmbedding",
     "Concept",
     "ConceptRelation",
-    "ConceptRelationEvidence"
+    "ConceptRelationEvidence",
+    "StockPrice",
 ]

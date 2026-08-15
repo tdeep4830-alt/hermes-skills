@@ -11,8 +11,12 @@ from app.manager.embedding_manager import EmbeddingManagerMixin
 from app.manager.news_manager import NewsManagerMixin
 from app.manager.concept_manager import ConceptManagerMixin
 from app.manager.session import SessionMixin
+from app.manager.analytics_manager import AnalyticsManagerMixin
 from app.config import Settings
 import dotenv
+
+from app.manager.price_manager import PriceManagerMixin
+from app.manager.evaluation_manager import EvaluationManagerMixin
 
 dotenv.load_dotenv()
 settings = Settings()  # 確保 config.py 嘅 settings 係已經 load 咗 .env 嘅，唔會有空值
@@ -21,7 +25,7 @@ DATABASE_URL = settings.DATABASE_URL  # .env file path
   # .env file path
 
 class DatabaseManager(
-    SessionMixin, CompanyManagerMixin, NewsManagerMixin, ArticleManagerMixin, EmbeddingManagerMixin, ConceptManagerMixin
+    SessionMixin, CompanyManagerMixin, NewsManagerMixin, ArticleManagerMixin, EmbeddingManagerMixin, ConceptManagerMixin, AnalyticsManagerMixin, PriceManagerMixin, EvaluationManagerMixin
 ):
     """
     用法一 —— 簡單 CRUD（每個 method 內部自動開關 session、自動 commit）：

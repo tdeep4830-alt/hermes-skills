@@ -27,9 +27,12 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable, Optional
 
+from sqlalchemy import func, select
+
 from app.etl.embed_company_facts import embed_texts
 from app.etl.LLM_analyze import ExtractedTheme, ExtractionResult, extract_concepts_and_relations
-from app.models import AnalysisArticle, Concept
+from app.models import AnalysisArticle, Concept, ConceptRelation
+from app.manager.db_manager import DatabaseManager
 
 logger = logging.getLogger(__name__)
 
@@ -306,6 +309,7 @@ def _write_extraction_result(
 
     relations_reinforced = 0
     skipped_relations = 0
+    
 
     for relation in result.relations:
         from_concept_id = name_to_concept_id.get(relation.from_theme)
@@ -343,8 +347,44 @@ def _write_extraction_result(
         relations_reinforced += 1
 
     return {
+
         "themes_created": themes_created,
         "themes_reused": themes_reused,
         "relations_reinforced": relations_reinforced,
         "skipped_relations": skipped_relations,
     }
+
+def summarize_extraction(concept_id: int) -> dict[str, int]:
+    """總結某個 concept 的 extraction summary。"""
+    db = DatabaseManager()
+    with db.session_scope() as session:
+        concept = session.get(Concept, concept_id)
+        if concept is None:
+            raise ValueError(f"concept_id={concept_id} 唔存在")
+
+        # 淨係喺 session 仲開緊嗰陣直接數 count(唔攞返成個 relationship
+        # collection)，唔會撞 DetachedInstanceError(session_scope() 一出咗
+        # `with` 就會 close session，之後先想 lazy-load relationship 會炸)。
+        relations_reinforced = session.scalar(
+            select(func.count()).select_from(ConceptRelation).where(
+                (ConceptRelation.from_concept_id == concept_id)
+                | (ConceptRelation.to_concept_id == concept_id)
+            )
+        )
+        concept_name = concept.name
+        concept_description = concept.description
+
+    skipped_relations = 0  # 無法從 DB 計算，因為 skipped 嘅 relation 根本冇寫入 DB
+
+    return {
+        "concept_id": concept_id,
+        "concept_name": concept_name,
+        "concept_description": concept_description,
+        "relations_reinforced": relations_reinforced,
+        "skipped_relations": skipped_relations,
+    }
+
+if __name__ == "__main__":
+    db = DatabaseManager()
+    stats = process_news_for_concepts(db, news_id=100)
+    print(stats)

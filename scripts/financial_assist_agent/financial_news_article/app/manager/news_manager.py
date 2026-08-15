@@ -3,7 +3,7 @@ News / Tag / NewsCompanyLink / NewsTagLink 嘅 CRUD + 常用查詢。
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone, time
 from typing import Any, Optional, Sequence
 
 from sqlalchemy import or_, select
@@ -111,15 +111,24 @@ class NewsManagerMixin:
         news_type: Optional[str] = None,
         limit: int = 100,
     ) -> list[News]:
-        """喺 title / content 度做關鍵字模糊搜尋，仲可以夾埋日期區間 / news_type 篩選。"""
+        """喺 title / content 度做關鍵字模糊搜尋，仲可以夾埋日期區間 / news_type 篩選。
+        start_date/end_date 可以係 date 或 datetime，會自動轉換。"""
+        from datetime import date
+        
         with self.session_scope() as s:
             stmt = select(News)
             if keyword:
                 like_pattern = f"%{keyword}%"
                 stmt = stmt.where(or_(News.title.ilike(like_pattern), News.content.ilike(like_pattern)))
             if start_date:
+                # 如果係 date 對象，轉成 datetime（當日 00:00:00）
+                if isinstance(start_date, date) and not isinstance(start_date, datetime):
+                    start_date = datetime.combine(start_date, time.min).replace(tzinfo=timezone.utc)
                 stmt = stmt.where(News.published_at >= start_date)
             if end_date:
+                # 如果係 date 對象，轉成 datetime（當日 23:59:59.999999）
+                if isinstance(end_date, date) and not isinstance(end_date, datetime):
+                    end_date = datetime.combine(end_date, time.max).replace(tzinfo=timezone.utc)
                 stmt = stmt.where(News.published_at <= end_date)
             if news_type:
                 stmt = stmt.where(News.news_type == news_type)
