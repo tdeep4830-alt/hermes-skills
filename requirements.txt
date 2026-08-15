@@ -15,3 +15,6 @@ beautifulsoup4>=4.12
 pydantic-settings>=2.2
 openai
 pgvector
+dotenv
+bs4
+requests

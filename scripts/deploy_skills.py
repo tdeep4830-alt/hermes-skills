@@ -37,11 +37,13 @@ def docker_exec(cmd: str):
 
 # ── Install Requirements ──────────────────────────────────
 def install_requirements():
-    requirements_file =  Path(__file__).parent.parent / "requirements.txt"
+    # requirements.txt 喺 repo 根目錄，唔係 scripts/ 入面
+    requirements_file = Path(__file__).parent.parent / "requirements.txt"
     if requirements_file.exists():
         print(f"📦 Installing requirements...")
         docker_cp(requirements_file, "/tmp/requirements.txt")
-        docker_exec("pip install -r /tmp/requirements.txt")
+        # 用 venv 嘅 python 裝，唔係系統 pip
+        docker_exec("/opt/hermes/.venv/bin/python3 -m pip install -r /tmp/requirements.txt")
     else:
         print("⚠️  No requirements.txt found, skipping.")
 
