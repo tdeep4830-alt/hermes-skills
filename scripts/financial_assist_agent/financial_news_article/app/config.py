@@ -6,7 +6,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # 動態計返條路就唔使理呼叫方個 cwd 係邊(直接跑 script、喺 tests/ 入面跑 pytest
 # 都得)，亦唔使理成個 project 而家部署喺邊——local 定係 VPS container(
 # /opt/hermes/...)都自動啱，唔好改返做 hardcoded absolute path(local 冧晒)。
-_REPO_ROOT_ENV = Path(__file__).resolve().parents[4] / ".env"
+_REPO_ROOT_ENV = Path(__file__).resolve().parents[1] / ".env"
 
 
 class Settings(BaseSettings):
