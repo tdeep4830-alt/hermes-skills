@@ -1,3 +1,4 @@
+ython
 import shutil
 import subprocess
 from pathlib import Path
@@ -6,10 +7,13 @@ from pathlib import Path
 SRC         = Path(__file__).parent.parent / "skills"
 SCRIPTS_SRC = Path(__file__).parent  # scripts/ folder
 
-# Skills → host 機直接寫
+# Skills → host 機直接寫（agent 讀 SKILL.md 定義用）
 SKILLS_DEST = Path("/root/.hermes/skills/custom")
 
-# Scripts → docker cp 入 container
+# Scripts → host 機直接寫（俾 code-execution sandbox 用 docker_volumes 讀到）
+SCRIPTS_HOST_DEST = Path("/root/.hermes/scripts")
+
+# Scripts → docker cp 入 Flask API container（HTTP endpoint 類 skill 專用）
 CONTAINER              = "hermes-agent-c05p-hermes-agent-1"
 CONTAINER_SCRIPTS_DEST = "/opt/hermes/scripts"
 
@@ -37,18 +41,16 @@ def docker_exec(cmd: str):
 
 # ── Install Requirements ──────────────────────────────────
 def install_requirements():
-    # requirements.txt 喺 repo 根目錄，唔係 scripts/ 入面
     requirements_file = Path(__file__).parent.parent / "requirements.txt"
     if requirements_file.exists():
-        print(f"📦 Installing requirements...")
+        print("📦 Installing requirements...")
         docker_cp(requirements_file, "/tmp/requirements.txt")
-        # 用 venv 嘅 python 裝，唔係系統 pip
         docker_exec("/opt/hermes/.venv/bin/python3 -m pip install -r /tmp/requirements.txt")
     else:
         print("⚠️  No requirements.txt found, skipping.")
 
 
-# ── Deploy Skills → host 機 ───────────────────────────────
+# ── Deploy Skills → host ───────────────────────────────────
 def deploy_skills():
     print("\n📂 Deploying skills to host...")
     SKILLS_DEST.mkdir(parents=True, exist_ok=True)
@@ -58,8 +60,6 @@ def deploy_skills():
             continue
 
         dest_category = SKILLS_DEST / category_dir.name
-
-        # 清走舊版本（解決 rename 殘留問題）
         if dest_category.exists():
             shutil.rmtree(dest_category)
 
@@ -77,9 +77,10 @@ def deploy_skills():
             print(f"  ✅ Skill: {category_dir.name}/{skill_dir.name}")
 
 
-# ── Deploy Scripts → container ────────────────────────────
-def deploy_scripts():
-    print("\n📂 Deploying scripts to container...")
+# ── Deploy Scripts → host（sandbox docker_volumes 用）──────
+def deploy_scripts_to_host():
+    print("\n📂 Deploying scripts to host (for sandbox mount)...")
+    SCRIPTS_HOST_DEST.mkdir(parents=True, exist_ok=True)
 
     for agent_dir in SCRIPTS_SRC.iterdir():
         if agent_dir.name.startswith('.') or agent_dir.name == '__pycache__':
@@ -87,12 +88,28 @@ def deploy_scripts():
         if not agent_dir.is_dir():
             continue
 
-        # 清走 container 舊版本（解決 rename 殘留問題）
-        docker_exec(f"rm -rf {CONTAINER_SCRIPTS_DEST}/{agent_dir.name}")
+        dest = SCRIPTS_HOST_DEST / agent_dir.name
+        if dest.exists():
+            shutil.rmtree(dest)
 
-        # Copy 整個 agent 資料夾（包括所有子層）入 container
+        shutil.copytree(agent_dir, dest, ignore=IGNORE_PATTERNS)
+        print(f"  ✅ Host copy: {agent_dir.name}")
+
+
+# ── Deploy Scripts → Flask API container ───────────────────
+def deploy_scripts_to_container():
+    print("\n📂 Deploying scripts to Flask API container...")
+
+    for agent_dir in SCRIPTS_SRC.iterdir():
+        if agent_dir.name.startswith('.') or agent_dir.name == '__pycache__':
+            continue
+        if not agent_dir.is_dir():
+            continue
+
+        docker_exec(f"rm -rf {CONTAINER_SCRIPTS_DEST}/{agent_dir.name}")
         docker_cp(agent_dir, CONTAINER_SCRIPTS_DEST)
-        print(f"  ✅ Agent: {agent_dir.name}")
+        print(f"  ✅ Container copy: {agent_dir.name}")
+
 
 def deploy_env():
     env_file = SCRIPTS_SRC / "financial_assist_agent" / "financial_news_article" / ".env"
@@ -101,20 +118,33 @@ def deploy_env():
         print("✅ .env deployed to container")
 
 
+# ── Recycle sandbox container 等新 mount 生效 ───────────────
+def restart_sandbox_if_running():
+    print("\n🔄 Checking code-execution sandbox...")
+    result = subprocess.run(
+        ["docker", "ps", "-a", "--filter", "label=hermes-agent=1",
+         "--format", "{{.Names}}"],
+        capture_output=True, text=True
+    )
+    names = [n for n in result.stdout.splitlines() if n.strip()]
+    if not names:
+        print("  ℹ️  No running sandbox found, nothing to recycle.")
+        return
+    for name in names:
+        print(f"  🔄 Removing sandbox container: {name}")
+        subprocess.run(["docker", "rm", "-f", name], check=True)
+    print("  ✅ Sandbox will be recreated with latest docker_volumes on next execute_code call.")
+
+
 # ── Main ──────────────────────────────────────────────────
 def main():
     print("🚀 Starting deploy...")
-    print(f"   Skills  → host: {SKILLS_DEST}")
-    print(f"   Scripts → container: {CONTAINER}:{CONTAINER_SCRIPTS_DEST}")
-    print(f"   .env    → container: {CONTAINER}:{CONTAINER_SCRIPTS_DEST}/financial_assist_agent/financial_news_article/.env")
+    print(f"   Skills  → host:                 {SKILLS_DEST}")
+    print(f"   Scripts → host (mount 入兩個 container): {SCRIPTS_HOST_DEST}")
 
-    install_requirements()
+    install_requirements()   # 呢個保留 —— 淨係裝 container 嘅 venv dependency,同 script 位置無關
     deploy_skills()
-    deploy_scripts()
-    deploy_env()
+    deploy_scripts_to_host()
+    restart_sandbox_if_running()
 
     print("\n🎉 Deploy complete!")
-
-
-if __name__ == "__main__":
-    main()
