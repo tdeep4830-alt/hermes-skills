@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-08-15T11:32:22.900228+00:00",
+  "generated_at": "2026-08-18T09:32:27.748066+00:00",
   "horizons_trading_days": [
     5,
     10,
@@ -10,8 +10,8 @@
   "overall": {
     "all": {
       "total_signals": 2,
-      "evaluated_signals": 0,
-      "skipped_signals": 2,
+      "evaluated_signals": 2,
+      "skipped_signals": 0,
       "horizons": {
         "5": {
           "evaluated": 0,
@@ -41,8 +41,8 @@
     },
     "positive": {
       "total_signals": 1,
-      "evaluated_signals": 0,
-      "skipped_signals": 1,
+      "evaluated_signals": 1,
+      "skipped_signals": 0,
       "horizons": {
         "5": {
           "evaluated": 0,
@@ -72,8 +72,8 @@
     },
     "negative": {
       "total_signals": 1,
-      "evaluated_signals": 0,
-      "skipped_signals": 1,
+      "evaluated_signals": 1,
+      "skipped_signals": 0,
       "horizons": {
         "5": {
           "evaluated": 0,
@@ -105,8 +105,8 @@
   "per_company": {
     "MSFT": {
       "total_signals": 2,
-      "evaluated_signals": 0,
-      "skipped_signals": 2,
+      "evaluated_signals": 2,
+      "skipped_signals": 0,
       "horizons": {
         "5": {
           "evaluated": 0,
